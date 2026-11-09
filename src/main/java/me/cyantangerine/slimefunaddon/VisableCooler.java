@@ -30,6 +30,7 @@ import java.util.logging.Level;
 import javax.annotation.ParametersAreNonnullByDefault;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -91,8 +92,12 @@ import org.bukkit.potion.PotionEffect;
  *
  * <p>创造模式的点击是 {@link InventoryCreativeEvent}（ClickType.CREATIVE，左右键被压成同一个类型），
  * 且一次点击会连发两个 SetCreativeModeSlot 包（槽位包 + 光标包）。这里按客户端上报的
- * cursor 反推意图：左键只是搬运整只冰柜，完全放行；右键改了 bundle 内容则取消事件，
- * Paper 会回发真实槽位物品并清空光标。潜行右键容器则取消原版交互并主动打开实时容器 GUI。</p>
+ * cursor 反推意图：左键只是搬运整只冰柜，完全放行；右键改了 bundle 内容则取消事件。</p>
+ *
+ * <p><b>幽灵占位物</b>：Folia 26.3 的 {@code handleSetCreativeModeSlot} 在 DENY 且
+ * {@code slotNum < 0}（OUTSIDE 光标包）时是静默 return，一个同步包都不发，
+ * 客户端会一直"拿着"它本地预测倒出来的玻璃瓶。所以占位物都带 PDC 标记，
+ * 右键时显式广播服务端真实光标，打开/关闭冰柜 GUI 时再强制全量同步并回收泄漏物。</p>
  *
  * <p>三层显示，按能力自动降级：{@link BundleMeta} 图标条 / {@link Damageable} 耐久条 / Lore 文本条。</p>
  */
@@ -116,6 +121,17 @@ public class VisableCooler extends Cooler implements Listener {
     private static final long CHECK_INTERVAL_TICKS = 10L;
     /** 一次创造模式点击会连发两个包，动作只做一次 */
     private static final long CREATIVE_ACTION_DEDUP_MILLIS = 250L;
+    /** 幽灵占位物的兜底回收窗口：客户端可能过几秒才把倒出的物品写回某个格子 */
+    private static final long CREATIVE_LEAK_WINDOW_MILLIS = 15_000L;
+    /** 当被消耗后，小冰柜内的数量小于指定值时，都发消息，负数表示关闭 **/
+    private static final short WARNING_IF_ITEMS_COUNT_BELOW = 3;
+    /**
+     * 占位物的 PDC 标记。客户端把 BundleMeta 里的玻璃瓶/冰"倒出来"时会保留完整 NBT，
+     * 凭这个标记就能精确回收，绝不误伤玩家自己的普通玻璃瓶/冰。
+     * 用不带 Plugin 的构造，是为了在注册前的静态物品模板里也能打标。
+     */
+    private static final NamespacedKey PLACEHOLDER_KEY =
+            new NamespacedKey("cyantestaddon", "vc_placeholder");
 
     /** 1.19.2 客户端把 bundle 满格写死为 64 权重，没有 setMaxStackSize 时用它做映射 */
     private static final int LEGACY_BUNDLE_MAX_WEIGHT = 64;
@@ -133,6 +149,8 @@ public class VisableCooler extends Cooler implements Listener {
     private static final String NOT_BOUND = ChatColor.RED + "读取小冰柜失败，请先手持右键打开一次完成初始化。";
     private static final String NOT_HELD = ChatColor.YELLOW
             + "请把小冰柜放到主手或副手，再右键使用来设置名称；设置完成后即可在原版物品栏正常使用。";
+    private static final String NOT_ENOUGH_WARN_EMPTY = ChatColor.YELLOW + "[ " + ChatColor.WHITE + " %s " + ChatColor.YELLOW + " ] 里已经没有果汁。";
+    private static final String NOT_ENOUGH_WARN = ChatColor.YELLOW + "[ " + ChatColor.WHITE + " %s " + ChatColor.YELLOW + " ] 里只剩下 " + ChatColor.RED + "%d" + ChatColor.YELLOW + " 瓶果汁。";
 
     /** 1.21 的 {@code ItemMeta#setMaxStackSize(Integer)}；1.19.2 没有，为 null 时退回 64 权重映射 */
     private static final Method SET_MAX_STACK_SIZE = findSetMaxStackSize();
@@ -151,6 +169,8 @@ public class VisableCooler extends Cooler implements Listener {
     private final ConcurrentMap<UUID, Long> feedCooldown = new ConcurrentHashMap<>();
     /** 玩家 UUID -> 上一次创造模式右键动作的时间，用来合并同一次点击的两个包 */
     private final ConcurrentMap<UUID, Long> creativeActionAt = new ConcurrentHashMap<>();
+    /** 玩家 UUID -> 最近一次检测到占位物被倒出的时间（PDC 丢失时靠它兜底识别） */
+    private final ConcurrentMap<UUID, Long> creativeSpillAt = new ConcurrentHashMap<>();
 
     private Plugin plugin;
     private FoliaLib foliaLib;
@@ -330,6 +350,8 @@ public class VisableCooler extends Cooler implements Listener {
 
         if (isOurCooler(item)) {
             applyDisplay(item, countUsedSlots(view));
+            // 关掉 GUI 后客户端可能把本地预测的占位物放回物品栏，下一 tick 强制同步一次
+            schedulePurge(player);
 
             // 旧版本创建过的 27 格背包，关掉菜单后异步扩到 CAPACITY，下次打开就是 36 格
             if (view.getSize() != CAPACITY) {
@@ -351,6 +373,7 @@ public class VisableCooler extends Cooler implements Listener {
         busy.remove(uuid);
         feedCooldown.remove(uuid);
         creativeActionAt.remove(uuid);
+        creativeSpillAt.remove(uuid);
         stopInitWatch(uuid);
         WrappedTask task = saturationChecks.remove(uuid);
         if (task != null) {
@@ -491,15 +514,29 @@ public class VisableCooler extends Cooler implements Listener {
         }
 
         int slot = -1;
+        int count = 0, max = Math.min(CAPACITY, WARNING_IF_ITEMS_COUNT_BELOW);
+        boolean warn = false;
         for (int i = 0; i < inv.getSize(); i++) {
             if (isJuice(inv.getItem(i))) {
                 slot = i;
-                break;
+                if (max < 0) {
+                    break;
+                } else {
+                    count++;
+                    if (count > max) break;
+                }
             }
         }
 
         if (slot < 0) {
             return false;
+        }
+        if (count <= max) {
+            if (coolerItem.getItemMeta() == null) {
+                plugin.getLogger().warning("冰柜 " + coolerItem.getType() + " 没有元数据:" + coolerItem);
+            } else {
+                warn = true;
+            }
         }
 
         ItemStack juice = inv.getItem(slot);
@@ -524,6 +561,16 @@ public class VisableCooler extends Cooler implements Listener {
         player.playSound(player.getLocation(), Sound.ENTITY_GENERIC_DRINK, 1F, 1F);
 
         inv.setItem(slot, null);
+
+        if (warn) {
+            if (count <= 1) {
+                player.sendMessage(String.format(NOT_ENOUGH_WARN_EMPTY, coolerItem.getItemMeta().getDisplayName()));
+            }else {
+                player.sendMessage(String.format(NOT_ENOUGH_WARN, coolerItem.getItemMeta().getDisplayName(), count - 1));
+            }
+
+        }
+
         saveBackpack(backpack);
         applyDisplay(coolerItem, countUsedSlots(inv)); // 用真实格数，不再猜测 -1
         return true;
@@ -769,6 +816,16 @@ public class VisableCooler extends Cooler implements Listener {
             return;
         }
 
+        // 客户端从 bundle 里倒出来的占位物一旦被写进服务端槽位，立刻取消并回收。
+        // 没有这一步，创造模式把幽灵玻璃瓶"放下"后它就变成了真实物品。
+        if (isMarkedPlaceholder(event.getCurrentItem()) || isMarkedPlaceholder(event.getCursor())) {
+            event.setCancelled(true);
+            event.setCursor(null);
+            markSpill(player);
+            schedulePurge(player);
+            return;
+        }
+
         Inventory top = event.getView().getTopInventory();
         Inventory view = openViews.get(player.getUniqueId());
         boolean inCoolerGui = view != null && (view == top || view.equals(top));
@@ -864,7 +921,9 @@ public class VisableCooler extends Cooler implements Listener {
      *     <li>右键动了收纳袋内容：cursor 是倒出来的占位物、塞进去的果汁，
      *         或是"内容被改过的冰柜"写回原槽 → 取消事件。</li>
      * </ul>
-     * Paper 在事件为 DENY 时会回发服务端真实槽位物品并清空客户端光标，占位物不会留在手上。
+     * 注意：Folia 26.3 的 {@code handleSetCreativeModeSlot} 只在 DENY 且 {@code slotNum >= 0}
+     * 时回发真实槽位并清空光标；OUTSIDE 光标包 ({@code slotNum < 0}) 被 DENY 后是静默 return，
+     * 一个包都不发。所以这里必须自己广播服务端真实光标，否则幽灵占位物会一直留在客户端手上。
      */
     private void handleCreativeClick(InventoryCreativeEvent event, Player player) {
         ItemStack current = event.getCurrentItem();
@@ -874,19 +933,32 @@ public class VisableCooler extends Cooler implements Listener {
         boolean cursorCooler = isOurCooler(cursor);
         boolean cursorEmpty = cursor == null || cursor.getType().isAir();
         boolean outside = event.getSlotType() == InventoryType.SlotType.OUTSIDE;
-        boolean spilled = isOurPlaceholder(cursor);
+        boolean markedSpill = isMarkedPlaceholder(cursor);
+        boolean looseSpill = isLoosePlaceholder(cursor);
+        // 槽位包用带窗口的识别，避免平时误伤玩家自己的玻璃瓶
+        boolean spilled = isOurPlaceholder(player, cursor);
         boolean juice = isJuice(cursor);
+
+        // 只有真正带标记的占位物才刷新回收窗口；宽松匹配若也刷新会自激，窗口永远不过期。
+        if (markedSpill) {
+            markSpill(player);
+        }
 
         // ---- 1) OUTSIDE / 光标包 ----
         // 左键拿起、或原版丢弃整只冰柜：完全放行，插件不做任何事。
         // 倒出占位物的光标包只取消撤回；动作交给同一次点击的槽位包，
         // 免得玩家自己丢一个普通玻璃瓶也被当成"操作了冰柜"。
         if (outside) {
-            // 左键搬运 / 丢弃整只冰柜、以及所有普通物品都原样放行；
-            // 只有被倒出来的占位物需要撤回，动作一律由同一次点击的槽位包触发。
-            if (spilled) {
+            // 光标包沿用宽松形状识别（与原行为一致），但若 PDC 丢失、窗口还没打开也不能放行：
+            // ALLOW 会真的把物品掉到地上。这里只取消 + 撤回，不触发关栏/提示，误伤极小。
+            if (markedSpill || looseSpill) {
                 event.setCancelled(true);
                 event.setCursor(null);
+                // DENY + slotNum < 0 时 Folia 静默 return，一个同步包都不发：
+                // 必须自己把服务端真实光标广播给客户端，否则幽灵玻璃瓶会一直留在手上。
+                clearCreativeCursor(player);
+                schedulePurge(player);
+                markSpill(player);
             }
             return;
         }
@@ -899,9 +971,11 @@ public class VisableCooler extends Cooler implements Listener {
         // ---- 3) 槽位包没点到冰柜：普通物品一律放行 ----
         if (!currentCooler && !cursorCooler) {
             // 唯一例外是刚右键倒出来、又被放到别的格子里的占位物：撤回它，但不重复关栏/提示。
-            if (spilled && withinCreativeWindow(player)) {
+            if (spilled) {
                 event.setCancelled(true);
                 event.setCursor(null);
+                clearCreativeCursor(player);
+                schedulePurge(player);
             }
             return;
         }
@@ -932,6 +1006,8 @@ public class VisableCooler extends Cooler implements Listener {
         if (!claimCreativeAction(player)) {
             return;
         }
+        // 右键动作一开始就打开回收窗口：客户端可能过几秒才把倒出的占位物写回某个格子。
+        markSpill(player);
 
         // 在主手/副手（含选中的快捷栏）→ 进入 Slimefun 的命名流程；
         // 还躺在背包格子里 → 只关掉原版物品栏浮窗并提示，绝不触发 Slimefun 的「请输入名称」。
@@ -944,10 +1020,88 @@ public class VisableCooler extends Cooler implements Listener {
         openCooler(player, coolerItem);
     }
 
-    /** 最近 250ms 内是否发生过一次冰柜右键（用来识别客户端残留的占位物）。 */
-    private boolean withinCreativeWindow(Player player) {
-        Long last = creativeActionAt.get(player.getUniqueId());
-        return last != null && System.currentTimeMillis() - last < CREATIVE_ACTION_DEDUP_MILLIS;
+    /** 是否处在"刚右键倒出过占位物"的回收窗口内。 */
+    private boolean withinCreativeLeakWindow(Player player) {
+        Long last = creativeSpillAt.get(player.getUniqueId());
+        return last != null && System.currentTimeMillis() - last < CREATIVE_LEAK_WINDOW_MILLIS;
+    }
+
+    private void markSpill(Player player) {
+        creativeSpillAt.put(player.getUniqueId(), System.currentTimeMillis());
+    }
+
+    /**
+     * 在事件线程上立刻把服务端真实光标重发给客户端。
+     * CraftHumanEntity#setItemOnCursor 会调用 AbstractContainerMenu#broadcastCarriedItem，
+     * 这是覆盖 OUTSIDE 包 DENY 后"静默 return"的唯一可靠手段。
+     */
+    private void clearCreativeCursor(Player player) {
+        try {
+            ItemStack cursor = player.getItemOnCursor();
+            // 只清带标记的占位物，服务端真实光标（即使是玩家自己的玻璃瓶）原样重发
+            player.setItemOnCursor(isMarkedPlaceholder(cursor) ? null : cursor);
+        } catch (RuntimeException | LinkageError ex) {
+            warn("同步创造模式光标失败", ex);
+        }
+    }
+
+    /** 下一 tick 在玩家所属实体线程做一次完整回收（Folia 要求实体改动必须在区域线程）。 */
+    private void schedulePurge(Player player) {
+        runAtEntity(player, () -> purgeLeakedPlaceholders(player));
+    }
+
+    /**
+     * 回收客户端本地预测倒出来的占位物：
+     * <ol>
+     *     <li>重发服务端真实光标（broadcastCarriedItem），覆盖客户端手里那叠幽灵玻璃瓶；</li>
+     *     <li>删掉已经写进服务端槽位的、带 PDC 标记的占位物；</li>
+     *     <li>全量回发槽位（sendAllDataToRemote），覆盖客户端自己画出来的物品。</li>
+     * </ol>
+     * 只在带标记时删物品，所以玩家自己的普通玻璃瓶/冰永远不会被误伤。
+     */
+    private void purgeLeakedPlaceholders(Player player) {
+        if (!player.isOnline()) {
+            return;
+        }
+        try {
+            PlayerInventory inv = player.getInventory();
+
+            ItemStack cursor = player.getItemOnCursor();
+            // 只清带标记的占位物，服务端真实光标（即使是玩家自己的玻璃瓶）原样重发
+            player.setItemOnCursor(isMarkedPlaceholder(cursor) ? null : cursor);
+
+            boolean changed = false;
+            ItemStack[] storage = inv.getStorageContents();
+            for (int i = 0; i < storage.length; i++) {
+                if (isMarkedPlaceholder(storage[i])) {
+                    storage[i] = null;
+                    changed = true;
+                }
+            }
+            if (changed) {
+                inv.setStorageContents(storage);
+            }
+
+            changed = false;
+            ItemStack[] armor = inv.getArmorContents();
+            for (int i = 0; i < armor.length; i++) {
+                if (isMarkedPlaceholder(armor[i])) {
+                    armor[i] = null;
+                    changed = true;
+                }
+            }
+            if (changed) {
+                inv.setArmorContents(armor);
+            }
+
+            if (isMarkedPlaceholder(inv.getItemInOffHand())) {
+                inv.setItemInOffHand(null);
+            }
+
+            player.updateInventory();
+        } catch (RuntimeException | LinkageError ex) {
+            warn("回收创造模式残留占位物失败", ex);
+        }
     }
 
     /** 一次点击两个包，动作只执行第一次；250ms 内的第二个包仅做取消与同步。 */
@@ -978,13 +1132,56 @@ public class VisableCooler extends Cooler implements Listener {
         runAtEntity(player, () -> closeVanillaOverlay(player));
     }
 
-    /** 我们从 BundleMeta 里塞进去、用来画条/盖 tooltip 的占位物（玻璃瓶或冰）。 */
-    private boolean isOurPlaceholder(ItemStack item) {
+    /** 占位物的严格识别：PDC 标记。只有它才能被用来删除服务端槽位里的物品。 */
+    private static boolean isMarkedPlaceholder(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) {
+            return false;
+        }
+        ItemMeta meta = item.getItemMeta();
+        return meta != null && meta.getPersistentDataContainer()
+                .has(PLACEHOLDER_KEY, PersistentDataType.BYTE);
+    }
+
+    /** 给 BundleMeta 里的占位物打标记；客户端倒出来时保留完整 NBT，标记也能读回来。 */
+    private static ItemStack markPlaceholder(ItemStack stack) {
+        ItemMeta meta = stack.getItemMeta();
+        if (meta != null) {
+            meta.getPersistentDataContainer().set(PLACEHOLDER_KEY, PersistentDataType.BYTE, (byte) 1);
+            stack.setItemMeta(meta);
+        }
+        return stack;
+    }
+
+    /**
+     * 我们从 BundleMeta 里塞进去、用来画条/盖 tooltip 的占位物（玻璃瓶或冰）。
+     * PDC 标记最可靠；客户端某些路径可能只回传材质+数量，所以在刚倒出过占位物的
+     * 时间窗口内额外按形状宽松识别。宽松识别只用于取消事件/重发光标，绝不删物品。
+     */
+    private boolean isOurPlaceholder(Player player, ItemStack item) {
         if (item == null || item.getType().isAir()) {
             return false;
         }
-        return (item.getType() == Material.GLASS_BOTTLE || item.getType() == Material.ICE)
-                && SlimefunItem.getByItem(item) == null;
+        return isMarkedPlaceholder(item)
+                || (withinCreativeLeakWindow(player) && isLoosePlaceholder(item));
+    }
+
+    private static boolean isLoosePlaceholder(ItemStack item) {
+        if (item == null || item.getType().isAir()) {
+            return false;
+        }
+        Material type = item.getType();
+        if ((type != Material.GLASS_BOTTLE && type != Material.ICE)
+                || SlimefunItem.getByItem(item) != null) {
+            return false;
+        }
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null && (meta.hasDisplayName() || meta.hasLore() || meta.hasEnchants())) {
+            return false;
+        }
+        int amount = item.getAmount();
+        return type == Material.ICE
+                ? amount == LEGACY_BUNDLE_MAX_WEIGHT
+                : amount > 0 && amount <= CAPACITY;
     }
 
     /** 找出这次点击里"会被放进上方背包 Inventory"的那个物品。 */
@@ -1045,11 +1242,18 @@ public class VisableCooler extends Cooler implements Listener {
         // 等本次点击事件处理完、并回到玩家所属区域线程再开菜单（Folia 上不能在事件里直接切容器）
         runAtEntity(player, () -> {
             boolean uninitialized = !isInitialized(coolerItem);
+            boolean creative = player.getGameMode() == GameMode.CREATIVE;
+
+            // 创造模式客户端会本地预测"从 bundle 倒出占位物"。未初始化路径原本就关浮窗，
+            // 所以一直正常；已初始化路径直接开 GUI，幽灵玻璃瓶就留在了客户端光标上。
+            if (creative || uninitialized) {
+                closeVanillaOverlay(player);
+            }
+            if (creative) {
+                purgeLeakedPlaceholders(player);
+            }
 
             if (uninitialized) {
-                // 从玩家物品栏里点开的：先关掉原版物品栏浮窗
-                closeVanillaOverlay(player);
-
                 // Slimefun 的 chat catcher 要求物品必须在主手/副手，否则输入名称必然被拒。
                 // 不满足时只发提示，绝不触发它的「请输入名称」机制。
                 if (!isHeld(player, coolerItem)) {
@@ -1175,7 +1379,7 @@ public class VisableCooler extends Cooler implements Listener {
      * 而不是原版收纳袋的空内容。绑定完成后由 {@link #applyDisplay} 换回玻璃瓶容量条。
      */
     private static ItemStack createIcePlaceholder() {
-        return new ItemStack(Material.ICE, LEGACY_BUNDLE_MAX_WEIGHT);
+        return markPlaceholder(new ItemStack(Material.ICE, LEGACY_BUNDLE_MAX_WEIGHT));
     }
 
     private void giveBack(Player player, ItemStack item) {
@@ -1476,7 +1680,7 @@ public class VisableCooler extends Cooler implements Listener {
                 (int) Math.ceil(LEGACY_BUNDLE_MAX_WEIGHT * (double) used / CAPACITY)));
 
         if (SET_MAX_STACK_SIZE == null) {
-            return new ItemStack(Material.GLASS_BOTTLE, legacyAmount);
+            return markPlaceholder(new ItemStack(Material.GLASS_BOTTLE, legacyAmount));
         }
 
         ItemStack bottle = new ItemStack(Material.GLASS_BOTTLE, used);
@@ -1484,10 +1688,13 @@ public class VisableCooler extends Cooler implements Listener {
             ItemMeta bottleMeta = bottle.getItemMeta();
             if (bottleMeta != null) {
                 SET_MAX_STACK_SIZE.invoke(bottleMeta, CAPACITY);
+                // maxStackSize 和 PDC 标记一次写完，避免两次 setItemMeta 互相覆盖
+                bottleMeta.getPersistentDataContainer()
+                        .set(PLACEHOLDER_KEY, PersistentDataType.BYTE, (byte) 1);
                 bottle.setItemMeta(bottleMeta);
             }
         } catch (ReflectiveOperationException | LinkageError ex) {
-            return new ItemStack(Material.GLASS_BOTTLE, legacyAmount);
+            return markPlaceholder(new ItemStack(Material.GLASS_BOTTLE, legacyAmount));
         }
         return bottle;
     }
