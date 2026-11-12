@@ -24,6 +24,12 @@
             <url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url>
         </repository>
 
+<!--        <repository>-->
+<!--            <id>gugu-maven-repo</id>-->
+<!--            <url>https://maven.norain.city/releases</url>-->
+<!--        </repository>-->
+
+
         <repository>
             <id>jitpack.io</id>
             <url>https://jitpack.io</url>
@@ -83,10 +89,24 @@
             <scope>provided</scope>
         </dependency>
 
+<!--        <dependency>-->
+<!--            <groupId>io.github.Slimefun</groupId>-->
+<!--            <artifactId>Slimefun4</artifactId>-->
+<!--            <version>RC-32</version>-->
+<!--&lt;!&ndash;            <systemPath>C:\Users\Elvin\Desktop\GitHub\TestSlimeAddon\lib\Slimefun-DEV-SNAPSHOT.jar</systemPath>&ndash;&gt;-->
+<!--            <scope>provided</scope>-->
+<!--            <exclusions>-->
+<!--                <exclusion>-->
+<!--                    <groupId>io.github.baked-libs</groupId>-->
+<!--                    <artifactId>dough-api</artifactId>-->
+<!--                </exclusion>-->
+<!--            </exclusions>-->
+<!--        </dependency>-->
+
         <dependency>
-            <groupId>io.github.Slimefun</groupId>
+            <groupId>com.github.SlimefunGuguProject</groupId>
             <artifactId>Slimefun4</artifactId>
-            <version>RC-32</version>
+            <version>DEV-SNAPSHOT</version>
             <scope>provided</scope>
             <exclusions>
                 <exclusion>
@@ -94,13 +114,20 @@
                     <artifactId>dough-api</artifactId>
                 </exclusion>
             </exclusions>
+<!--            <systemPath>lib/Slimefun-DEV-SNAPSHOT.jar</systemPath>-->
         </dependency>
-
+<!--        mvn install:install-file -Dfile=lib/Slimefun-DEV-SNAPSHOT.jar -DgroupId=com.github.SlimefunGuguProject -DartifactId=Slimefun4 -Dversion=DEV-SNAPSHOT -Dpackaging=jar-->
         <dependency>
             <groupId>com.tcoded</groupId>
             <artifactId>FoliaLib</artifactId>
             <version>0.5.1</version>
             <scope>compile</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.30</version>
         </dependency>
     </dependencies>
 </project>

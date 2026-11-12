@@ -1,4 +1,4 @@
-package me.cyantangerine.slimefunaddon;
+package me.cyantangerine.slimefunaddon.item;
 
 import io.github.thebusybiscuit.slimefun4.api.events.PlayerRightClickEvent;
 import io.github.thebusybiscuit.slimefun4.api.items.ItemGroup;

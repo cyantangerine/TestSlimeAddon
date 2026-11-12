@@ -19,6 +19,7 @@
     .\deploy.bat                 # 完整流程（推荐双击）
     .\deploy.ps1 -NoRestart      # 只编译 + 复制，不重启
     .\deploy.ps1 -SkipBuild      # 跳过编译，直接部署 target 里已有的 jar
+    .\deploy.ps1 -DeploySlimefun # 同时部署本地 Slimefun fork 构建出的 jar
     .\deploy.ps1 -Detached       # 后台启动（无控制台窗口，适合 CI / 自动化调用）
     .\deploy.ps1 -StartTimeout 240 -StopTimeout 90
 #>
@@ -30,6 +31,8 @@ param(
     [string] $MavenCmd     = '',
     [switch] $NoRestart,
     [switch] $SkipBuild,
+    [switch] $DeploySlimefun,
+    [string] $SlimefunJar  = '',
     [switch] $Detached,
     [int]    $StopTimeout  = 45,
     [int]    $StartTimeout = 150
@@ -134,7 +137,7 @@ if ($SkipBuild) {
     Write-Step "1/5 编译  Maven: $mvn"
     $env:JAVA_HOME = $JavaHome
     $env:PATH = "$JavaHome\bin;$env:PATH"
-    Invoke-Native { & $mvn '-B' '-f' (Join-Path $ProjectDir 'pom.xml') 'clean' 'package' '-DskipTests' }
+    Invoke-Native { & $mvn '-B' '-f' (Join-Path $ProjectDir 'pom.xml') 'clean' '--offline' 'package' '-DskipTests' }
     if ($LASTEXITCODE -ne 0) {
         throw "Maven 构建失败（退出码 $LASTEXITCODE），服务器未做任何改动"
     }
@@ -229,6 +232,26 @@ try {
     throw "部署失败（服务器是否仍在运行、jar 被占用？）：$($_.Exception.Message)"
 }
 Write-Ok "已部署: $dest"
+
+# 同时部署本地 Slimefun fork 的 jar（修了 Folia 线程问题时需要一起换掉）
+if ($DeploySlimefun) {
+    if (-not $SlimefunJar) {
+        $SlimefunJar = Join-Path (Split-Path -Parent $ProjectDir) 'Slimefun4\build\libs\Slimefun-DEV-SNAPSHOT.jar'
+    }
+    $sfSource = Get-Item -LiteralPath $SlimefunJar -ErrorAction SilentlyContinue
+    if (-not $sfSource) { throw "找不到 Slimefun jar：$SlimefunJar（请先运行 gradlew shadowJar）" }
+
+    $sfDest = Join-Path $pluginsDir $sfSource.Name
+    if ((Test-Path -LiteralPath $sfDest) -and -not (Wait-FileFree $sfDest $fileWait)) {
+        throw "Slimefun jar 仍被占用，无法替换：$sfDest"
+    }
+    try {
+        Copy-Item -LiteralPath $sfSource.FullName -Destination $sfDest -Force -ErrorAction Stop
+    } catch {
+        throw "部署 Slimefun jar 失败：$($_.Exception.Message)"
+    }
+    Write-Ok "已部署: $sfDest  ($([math]::Round($sfSource.Length / 1KB, 1)) KB)"
+}
 
 # ---------- 5. 启动并等待就绪 ----------
 if ($NoRestart) {
