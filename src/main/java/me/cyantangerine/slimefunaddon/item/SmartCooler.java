@@ -76,13 +76,20 @@ public class SmartCooler extends SmartContainer implements Listener {
     public static final ItemStack HEAD_ICON = SlimefunUtils.getCustomHead("eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZjM4MTRkYjdjMjRmNDg2ODhhNjA0ZThkZmU4NGYwOTdiYjExYzc2YjQ4YTRjMDMxOWQyMTBmZDQ5NzBjMjA5MSJ9fX0=");
     /**
      * 容量：GUI 格数、Lore 进度条分母、占位玻璃瓶的最大堆叠数，三者统一用这个值。
-     * 1.21 的收纳袋权重 = 数量 / 最大堆叠数，于是 used 个瓶子正好画出 used / CAPACITY。
+     * 1.20.5+ 的收纳袋权重 = 数量 / 最大堆叠数（满格为 1.0），把占位物上限设成 CAPACITY 后，
+     * used 个瓶子正好画出 used / CAPACITY；1.19.2 没有该组件，改用 64 权重映射。
      */
     public static final int CAPACITY = 54;
     /**
      * 新建背包时传给 Slimefun 的格数，与容量一致
      */
     public static final int DEFAULT_SIZE = CAPACITY;
+    /**
+     * 堆叠上限系数：冰柜 = 1，即完全沿用物品原版上限。
+     * 果汁是玻璃瓶/药水（maxStackSize = 1），所以仍是一格一瓶，
+     * 容量条、格数、瓶数三者保持一一对应。
+     */
+    public static final int STACK_MULTIPLIER = 1;
 
     /**
      * 饱和度低于这个值就自动喝果汁；不依赖饱食度下降事件
@@ -130,7 +137,14 @@ public class SmartCooler extends SmartContainer implements Listener {
      */
     private final ConcurrentMap<UUID, Long> feedCooldown = new ConcurrentHashMap<>();
 
+    /** 未绑定背包时的满权重占位物（ICE 上限 64，放 64 个正好画满）。 */
     private static final Material defaultPlaceholder = Material.ICE;
+    /**
+     * 容量条占位物保留玻璃瓶，和果汁的视觉语义一致。它原版上限只有 1，靠父类
+     * {@code createFiller} 在 1.20.5+ 反射写入 max_stack_size 组件把分母改成 CAPACITY；
+     * 1.19.2 则靠数量映射。别为了修进度条换成 64 堆叠材质，那会让创造模式里
+     * 倒出的占位物与未初始化占位物难以区分。
+     */
     private static final Material placeholder = Material.GLASS_BOTTLE;
 
 
@@ -163,6 +177,11 @@ public class SmartCooler extends SmartContainer implements Listener {
     @Override
     protected int getCapacity() {
         return CAPACITY;
+    }
+
+    @Override
+    protected int getStackMultiplier() {
+        return STACK_MULTIPLIER;
     }
 
     public static SlimefunItemStack createItemStack() {
@@ -326,7 +345,7 @@ public class SmartCooler extends SmartContainer implements Listener {
         int count = 0, max = Math.min(CAPACITY, WARNING_IF_ITEMS_COUNT_BELOW);
         boolean warn = false;
         for (int i = 0; i < inv.getSize(); i++) {
-            if (isJuice(inv.getItem(i))) {
+            if (isAllowedItem(inv.getItem(i))) {
                 if (slot == -1) slot = i;
                 if (max < 0) {
                     break;
@@ -354,7 +373,7 @@ public class SmartCooler extends SmartContainer implements Listener {
         // 不发event了
         //        CoolerFeedPlayerEvent event = new CoolerFeedPlayerEvent(player, this, coolerItem, juice);
         //        Bukkit.getPluginManager().callEvent(event);
-        //        if (event.isCancelled() || !isJuice(inv.getItem(slot))) {
+        //        if (event.isCancelled() || !isAllowedItem(inv.getItem(slot))) {
         //            return false;
         //        }
 

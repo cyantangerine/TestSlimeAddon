@@ -15,6 +15,7 @@ import io.github.thebusybiscuit.slimefun4.implementation.items.backpacks.Slimefu
 import io.github.thebusybiscuit.slimefun4.implementation.listeners.BackpackListener;
 import io.github.thebusybiscuit.slimefun4.utils.ChestMenuUtils;
 
+import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -71,6 +72,11 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
     private static final NamespacedKey PLACEHOLDER_KEY = new NamespacedKey("cyantestaddon", "sc_placeholder");
     /** 1.19.2 客户端把 bundle 满格写死为 64 权重，没有 setMaxStackSize 时用它做映射 */
     public static final int LEGACY_BUNDLE_MAX_WEIGHT = 64;
+    /**
+     * 1.20.5+ 的 {@code ItemMeta#setMaxStackSize(Integer)}，写的是 NMS 的 max_stack_size 组件。
+     * 编译目标是 1.19.2，只能反射；老服务端上为 null，见 {@link #createFiller(int)}。
+     */
+    private static final Method SET_MAX_STACK_SIZE = findSetMaxStackSize();
     /** 首次命名：轮询检测绑定完成的周期与最长次数（10 tick × 60 ≈ 30 秒） */
     private static final long INIT_WATCH_PERIOD_TICKS = 10L;
     private static final int INIT_WATCH_MAX_CHECKS = 60;
@@ -79,18 +85,18 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
     private static final String ID_PLACEHOLDER = "<ID>";
     private static final String LORE_OWNER_PREFIX = ChatColor.GRAY + "所有者: ";
     private static final String BAR_PREFIX = ChatColor.GRAY + "容量 ";
-    private static final String COOLER_FULL = ChatColor.YELLOW + "[ " + ChatColor.WHITE + " %s " + ChatColor.YELLOW + " ] 已经满了，无法再装载。";
+    private static final String CONTAINER_FULL = ChatColor.YELLOW + "[ " + ChatColor.WHITE + " %s " + ChatColor.YELLOW + " ] 已经满了，无法再装载。";
     private static final String NOT_BOUND = ChatColor.RED + "背包尚未命名，请先手持右键打开一次完成初始化。";
     private static final String NOT_HELD = ChatColor.YELLOW + "请把背包放到主手或副手，再右键使用来设置名称；设置完成后即可在原版物品栏正常使用。";
 
-    private static final String JUICE_ONLY = ChatColor.RED + "背包只能存放非潜影盒的物品";
-    private static final String NO_JUICE_IN_CONTAINER = ChatColor.GRAY + "容器里没有可装载的物品。";
+    private static final String DEFAULT_LOAD_ONLY_MSG = ChatColor.RED + "该容器只能存放非潜影盒、非背包的物品";
+    private static final String DEFAULT_LOAD_ERROR_MSG = ChatColor.GRAY + "容器里没有可装载的物品。";
 
     protected String getLoadOnlyMsg() {
-        return JUICE_ONLY;
+        return DEFAULT_LOAD_ONLY_MSG;
     }
     protected String getLoadErrorMsg() {
-        return NO_JUICE_IN_CONTAINER;
+        return DEFAULT_LOAD_ERROR_MSG;
     }
 
     @Getter
@@ -132,6 +138,43 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
     protected abstract Material getDefaultPlaceholder();
     protected abstract Material getPlaceholder();
     protected abstract int getCapacity();
+
+    /**
+     * 单格允许的物品数 = min({@link #VANILLA_MAX_STACK_SIZE}, 物品原版上限 × 本系数)。
+     * SmartCooler = 1（原版行为，果汁/药水一格一瓶）；SmartBackpack = 4（四倍）。
+     * 之所以是系数而不是写死「一格一瓶」，是因为抽离父类后容器不再只装果汁：
+     * 每个物品的 {@link ItemStack#getMaxStackSize()} 都不一样，见 {@link #getStackLimit(ItemStack)}。
+     */
+    protected abstract int getStackMultiplier();
+
+    /**
+     * 原版单格堆叠上限。1.20.5+ 由 {@code max_stack_size} 组件决定，默认 <b>64</b>，
+     * 组件的合法范围只有 1..99；1.19.2 则由材质写死（1 / 16 / 64）。
+     */
+    public static final int VANILLA_MAX_STACK_SIZE = 64;
+
+    /**
+     * 单格堆叠上限 = min(64, 物品原版上限 × 容器系数)，<b>封顶 64</b>。
+     *
+     * <p>这里不能按系数无限放大：Bukkit 的 {@code ItemStack#setAmount()} 只是把数字写进
+     * NMS 的 count 字段、<b>不做校验</b>，所以 256 确实能写进 Inventory，但那是客户端
+     * 不认识的非法状态 —— GUI 同步、点击拆分、Slimefun 背包存档往返都会按原版上限处理，
+     * 实测超过 64 的整叠会直接消失。而且 256 已超出 {@code max_stack_size} 组件的
+     * 合法上限 99，连声明都做不到。</p>
+     *
+     * <p>封顶后系数仍对小堆叠物品生效：玻璃瓶 / 药水 1→4、末影珍珠 / 雪球 16→64、
+     * 圆石等 64 堆叠物品维持 64。背包 GUI 里的原版点击仍按 vanilla maxStackSize 合并，
+     * 插件只在批量装载（{@link #transfer}）与快捷存入（putIn）时执行这个上限。</p>
+     */
+    protected int getStackLimit(ItemStack item) {
+        int base = item.getMaxStackSize();
+        if (base <= 0) {
+            base = 1; // 空气 / 异常材质兜底
+        }
+        long limit = (long) base * Math.max(1, getStackMultiplier());
+        return (int) Math.min(limit, VANILLA_MAX_STACK_SIZE);
+    }
+
     /**
      * 造一个配套的物品模板。BUNDLE 才有收纳袋那种图标进度条；
      * ID / 所有者两行 lore 是 Slimefun 绑定背包用的，一行都不能删。
@@ -151,6 +194,14 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
             stack.setItemMeta(meta);
         }
         return stack;
+    }
+
+    private static Method findSetMaxStackSize() {
+        try {
+            return ItemMeta.class.getMethod("setMaxStackSize", Integer.class);
+        } catch (NoSuchMethodException ignored) {
+            return null; // 1.19.2：没有 max_stack_size 组件
+        }
     }
 
     @Override
@@ -199,7 +250,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
 
         switch (interact.getAction()) {
             case Action.RIGHT_CLICK_BLOCK:
-                // 手持小冰柜右键容器：默认改成从容器批量装载果汁
+                // 手持智能容器右键容器：默认改成从容器批量装载可收纳的物品
                 Block block = interact.getClickedBlock();
                 if (Utils.isContainerBlock(block)) {
                     if (player.isSneaking()) {
@@ -325,7 +376,8 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
                 try {
                     LoadResult result = transfer(container, backpack, found);
                     if (result.total() == 0) {
-                        resourceLib.runAtEntity(player, () -> player.sendMessage(COOLER_FULL));
+                        String full = String.format(CONTAINER_FULL, containerName(coolerItem));
+                        resourceLib.runAtEntity(player, () -> player.sendMessage(full));
                         return;
                     }
                     saveBackpack(backpack, null);
@@ -355,47 +407,51 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         return found;
     }
 
-    /** 扣容器 + 写背包，全部在同一个区域线程上完成，避免中途被别的线程改动造成复制/丢失。 */
+    /**
+     * 扣容器 + 写背包，全部在同一个区域线程上完成，避免中途被别的线程改动造成复制/丢失。
+     *
+     * <p>不能只看空槽：目标里已有的同类部分堆叠也要补满，且单格上限由
+     * {@link #getStackLimit(ItemStack)} 决定（果汁 1/格，智能背包里玻璃瓶 4/格、
+     * 16 堆叠物品 64/格；64 堆叠物品维持 64/格，一律不超过 {@link #VANILLA_MAX_STACK_SIZE}）。
+     * 每个源槽位按「实际能放多少」扣减，可能只搬走一叠的一部分。</p>
+     */
     protected LoadResult transfer(Inventory container, PlayerBackpack backpack, List<ContainerSlot> found) {
         Inventory target = backpack.getInventory();
         if (target == null) {
             return LoadResult.empty();
         }
 
-        int[] freeSlots = new int[target.getSize()];
-        int free = 0;
-        for (int i = 0; i < target.getSize(); i++) {
-            ItemStack stack = target.getItem(i);
-            if (stack == null || stack.getType().isAir() || stack.getAmount() <= 0) {
-                freeSlots[free++] = i;
-            }
-        }
-        if (free == 0) {
-            return LoadResult.empty();
-        }
-
-        // Material.GLASS_BOTTLE.getMaxStackSize();
-
         Map<String, Integer> byName = new LinkedHashMap<>();
         int total = 0;
 
         for (ContainerSlot snapshot : found) {
-            if (total >= free) {
-                break;
-            }
-
             ItemStack current = container.getItem(snapshot.slot());
             // 两次区域任务之间容器可能被人动过，只搬仍然对得上的槽位
             if (current == null || !current.isSimilar(snapshot.stack())) {
                 continue;
             }
 
-            int take = Math.min(free - total, current.getAmount());
-            if (take <= 0) {
+            int sourceAmount = current.getAmount();
+            if (sourceAmount <= 0) {
                 continue;
             }
 
-            int remaining = current.getAmount() - take;
+            // 先补同类部分堆叠、再用空槽。每个源槽位都重新扫一遍目标，
+            // 因为上一次写入可能刚把某个空槽变成半格，后面的槽位要接着补。
+            List<int[]> destinations = findDestinations(target, snapshot.stack());
+            int room = 0;
+            for (int[] destination : destinations) {
+                room += destination[1];
+            }
+
+            int take = Math.min(sourceAmount, room);
+            if (take <= 0) {
+                // 这类物品没地方放了，后面的槽位可能是别的物品，继续试
+                continue;
+            }
+
+            // 按实际搬走的数量扣减容器库存（一格可能只搬走一部分）
+            int remaining = sourceAmount - take;
             if (remaining <= 0) {
                 container.setItem(snapshot.slot(), null);
             } else {
@@ -404,25 +460,76 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
                 container.setItem(snapshot.slot(), left);
             }
 
-            // TODO 待修改
-            // 一格一瓶，这样图标条/容量显示直接等于瓶数
-            for (int n = 0; n < take; n++) {
-                ItemStack bottle = snapshot.stack().clone();
-                bottle.setAmount(1);
-                target.setItem(freeSlots[total + n], bottle);
-            }
+            // destinations 是本轮刚算出来的，且整个回调独占区域线程，必然放得下 take 个
+            placeInto(target, snapshot.stack(), destinations, take);
 
-            byName.merge(juiceName(snapshot.stack()), take, Integer::sum);
+            byName.merge(itemName(snapshot.stack()), take, Integer::sum);
             total += take;
         }
 
         return new LoadResult(total, byName);
     }
 
-    /** 容器里一个装着果汁的槽位快照（必须在方块所属区域线程读取）。 */
+    /**
+     * 找出目标里能放 template 的位置，返回 {@code {槽位, 还能放几个}} 的列表，
+     * 顺序是「已有同类部分堆叠」在前、「空槽」在后。
+     * 单格上限由 {@link #getStackLimit(ItemStack)} 决定，所以同一物品在不同容器里容量不同。
+     */
+    private List<int[]> findDestinations(Inventory target, ItemStack template) {
+        int limit = getStackLimit(template);
+        List<int[]> partial = new ArrayList<>();
+        List<int[]> empty = new ArrayList<>();
+
+        for (int i = 0; i < target.getSize(); i++) {
+            ItemStack stack = target.getItem(i);
+            if (isEmptySlot(stack)) {
+                empty.add(new int[]{i, limit});
+            } else if (stack.isSimilar(template)) {
+                int room = getStackLimit(stack) - stack.getAmount();
+                if (room > 0) {
+                    partial.add(new int[]{i, room});
+                }
+            }
+        }
+        partial.addAll(empty);
+        return partial;
+    }
+
+    /** 按 {@link #findDestinations} 的结果写入，返回实际写入的数量（正常等于 amount）。 */
+    private int placeInto(Inventory target, ItemStack template, List<int[]> destinations, int amount) {
+        int left = amount;
+        for (int[] destination : destinations) {
+            if (left <= 0) {
+                break;
+            }
+            int add = Math.min(destination[1], left);
+            if (add <= 0) {
+                continue;
+            }
+
+            ItemStack stack = target.getItem(destination[0]);
+            if (isEmptySlot(stack)) {
+                ItemStack placed = template.clone();
+                placed.setAmount(add);
+                target.setItem(destination[0], placed);
+            } else {
+                ItemStack grown = stack.clone();
+                grown.setAmount(stack.getAmount() + add);
+                target.setItem(destination[0], grown);
+            }
+            left -= add;
+        }
+        return amount - left;
+    }
+
+    private static boolean isEmptySlot(ItemStack stack) {
+        return stack == null || stack.getType().isAir() || stack.getAmount() <= 0;
+    }
+
+    /** 容器里一个装着可收纳物品的槽位快照（必须在方块所属区域线程读取）。 */
     protected record ContainerSlot(int slot, ItemStack stack) { }
 
-    /** 一次装载结果：总瓶数 + 按果汁名分组的数量。 */
+    /** 一次装载结果：总数量（按物品个数，不是格数） + 按物品名分组的数量。 */
     protected record LoadResult(int total, Map<String, Integer> byName) {
         static LoadResult empty() {
             return new LoadResult(0, Collections.emptyMap());
@@ -450,7 +557,8 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         return message.toString();
     }
 
-    private String juiceName(ItemStack stack) {
+    /** 装载汇总用的名字：Slimefun 物品用显示名，其余用自定义名 / 材质名。 */
+    private static String itemName(ItemStack stack) {
         SlimefunItem sfItem = SlimefunItem.getByItem(stack);
         if (sfItem != null) {
             return sfItem.getItemName();
@@ -463,8 +571,17 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         return ChatColor.WHITE + stack.getType().name();
     }
 
+    /** 提示消息里容器自己的名字，找不到显示名时退回材质名。 */
+    private static String containerName(ItemStack item) {
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null && meta.hasDisplayName()) {
+            return meta.getDisplayName();
+        }
+        return item.getType().name();
+    }
+
     // ------------------------------------------------------------------
-    // 覆盖原版收纳袋行为：只走"背包存取果汁"，其它物品一律拒绝
+    // 覆盖原版收纳袋行为：只走"背包存取允许的物品"，其它物品一律拒绝
     // ------------------------------------------------------------------
 
     @EventHandler(priority = EventPriority.HIGH)
@@ -475,6 +592,8 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         Inventory view = openViews.get(player.getUniqueId());
         boolean inCoolerGui = view != null && (view == top || view.equals(top));
 
+        // SmartCooler / SmartBackpack 各注册一份 Listener，但 isOurContainer 是排他的：
+        // 一次点击里只有一种容器会被认领，另一实例会自然落到「无关背包」分支直接返回。
         boolean eventCanceledBySlimefun = event.isCancelled();
         if (eventCanceledBySlimefun) {
             // 在容器Gui内无法点击其他容器，event可能被slimefun取消。
@@ -510,7 +629,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
                 int raw = event.getRawSlot();
                 boolean topClicked = raw >= 0 && raw < top.getSize();
                 ItemStack incoming = topClicked ? event.getCursor() : null;
-                if (incoming != null && !incoming.getType().isAir() && !isJuice(incoming)) {
+                if (incoming != null && !incoming.getType().isAir() && !isAllowedItem(incoming)) {
                     event.setCancelled(true);
                     player.sendMessage(getLoadOnlyMsg());
                 }
@@ -529,7 +648,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
             if (incoming != null) {
                 ResourceLib.Debug.msg(player,"incoming " + incoming.getType().name() + incoming.getAmount());
             }
-            if (incoming != null && !incoming.getType().isAir() && !isJuice(incoming)) {
+            if (incoming != null && !incoming.getType().isAir() && !isAllowedItem(incoming)) {
                 // 存入物品
                 event.setCancelled(true);
                 player.sendMessage(getLoadOnlyMsg());
@@ -625,7 +744,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
 //                        // 用手里的物品，点槽里的收纳袋
 //                    }
                     event.setCancelled(true);
-                    if (isJuice(target)) {
+                    if (isAllowedItem(target)) {
                         putIn(player, coolerItem, target, event, targetInSlot);
                     } else {
                         player.sendMessage(getLoadOnlyMsg());
@@ -662,7 +781,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         boolean looseSpill = isLoosePlaceholder(cursor);
         // 槽位包用带窗口的识别，避免平时误伤玩家自己的玻璃瓶
         boolean spilled = isOurPlaceholder(player, cursor);
-        boolean juice = isJuice(cursor);
+        boolean juice = isAllowedItem(cursor);
 
         // 只有真正带标记的占位物才刷新回收窗口；宽松匹配若也刷新会自激，窗口永远不过期。
         if (markedSpill) {
@@ -899,9 +1018,11 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
             return false;
         }
         int amount = item.getAmount();
+        // createFiller 在 1.20.5+ 用 used(≤capacity) 个，1.19.2 用映射后的 1..64 个，
+        // 宽松识别要覆盖两条路径的数量域，否则 used 较高时倒出的占位物会漏判。
         return type == getDefaultPlaceholder()
                 ? amount == LEGACY_BUNDLE_MAX_WEIGHT
-                : amount > 0 && amount <= getCapacity();
+                : amount > 0 && amount <= Math.max(getCapacity(), LEGACY_BUNDLE_MAX_WEIGHT);
     }
 
     /** 找出这次点击里"会被放进上方背包 Inventory"的那个物品。 */
@@ -918,7 +1039,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         };
     }
 
-    /** 右键果汁 -> 放进背包。原位置先清空，背包满/失败时退还。 */
+    /** 快捷存入：原位置先清空，先合并同类部分堆叠再用空槽，放不下的部分退还。 */
     private void putIn(Player player, ItemStack coolerItem, ItemStack target,
                        InventoryClickEvent event, boolean targetInSlot) {
         ItemStack toInsert = target.clone();
@@ -936,16 +1057,24 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
 
         withBackpack(player, coolerItem, backpack -> {
             Inventory inv = backpack.getInventory();
-            int slot = inv.firstEmpty();
-
-            if (slot < 0) {
-                giveBack(player, toInsert);
-                player.sendMessage(COOLER_FULL);
-                return;
+            List<int[]> destinations = findDestinations(inv, toInsert);
+            int room = 0;
+            for (int[] destination : destinations) {
+                room += destination[1];
             }
 
-            inv.setItem(slot, toInsert);
-            saveBackpack(backpack, coolerItem);
+            int amount = toInsert.getAmount();
+            int placed = placeInto(inv, toInsert, destinations, Math.min(amount, room));
+            if (placed < amount) {
+                // 一部分（或全部）塞不下：把没放进去的退还给玩家
+                ItemStack rest = toInsert.clone();
+                rest.setAmount(amount - placed);
+                giveBack(player, rest);
+                player.sendMessage(String.format(CONTAINER_FULL, containerName(coolerItem)));
+            }
+            if (placed > 0) {
+                saveBackpack(backpack, coolerItem);
+            }
         });
     }
 
@@ -1279,14 +1408,45 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
     }
 
     /**
-     * 画条用的占位物：空玻璃瓶。
-     * 1.21 的 bundle 权重 = 数量 / 最大堆叠数，所以放 used 个并把最大堆叠设为 CAPACITY，
-     * 条就精确等于 used / CAPACITY；1.19.2 没有 setMaxStackSize，只能把 used 线性映射到 64 权重。
+     * 画条用的占位物。两代客户端的 bundle 权重算法不同，必须分开处理：
+     * <ul>
+     *     <li><b>1.20.5+</b>：权重 = 数量 / {@code max_stack_size} 组件（早期按 64 权重计，
+     *         26.x 归一化到 1.0，比例一致）。把组件设成 {@link #getCapacity()}、数量设成 used，
+     *         条就是 used / CAPACITY。此时占位物用什么材质都不影响权重，冰柜可继续用玻璃瓶。</li>
+     *     <li><b>1.19.2</b>：没有这个组件，客户端固定按 64 权重算，只能把 used 线性映射成
+     *         1..64 个，分母由材质原版上限决定。</li>
+     * </ul>
+     * 重构时只搬了 legacy 映射，导致 1.21 上 {@code GLASS_BOTTLE}（原版上限 1）的权重恒为
+     * 数量 × 64 / 1 ≥ 64，图标条一直画满。这里恢复被删掉的反射分支，对所有子类统一生效。
      */
     private ItemStack createFiller(int used) {
+        int capacity = getCapacity();
+        Material type = getPlaceholder();
+        int amount = Math.max(1, Math.min(used, capacity));
         int legacyAmount = Math.max(1, Math.min(LEGACY_BUNDLE_MAX_WEIGHT,
-                (int) Math.ceil(LEGACY_BUNDLE_MAX_WEIGHT * (double) used / getCapacity())));
-        return markPlaceholder(new ItemStack(getPlaceholder(), legacyAmount));
+                (int) Math.ceil(LEGACY_BUNDLE_MAX_WEIGHT * (double) amount / capacity)));
+
+        if (SET_MAX_STACK_SIZE == null) {
+            // 1.19.2：客户端固定按 64 权重算，只能用数量映射
+            return markPlaceholder(new ItemStack(type, legacyAmount));
+        }
+
+        ItemStack filler = new ItemStack(type, amount);
+        try {
+            ItemMeta meta = filler.getItemMeta();
+            if (meta == null) {
+                return markPlaceholder(new ItemStack(type, legacyAmount));
+            }
+            SET_MAX_STACK_SIZE.invoke(meta, capacity);
+            // maxStackSize 与 PDC 标记一次写完，避免两次 setItemMeta 互相覆盖
+            meta.getPersistentDataContainer()
+                    .set(PLACEHOLDER_KEY, PersistentDataType.BYTE, (byte) 1);
+            filler.setItemMeta(meta);
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException ex) {
+            // 新版服务端上反射意外失败时仍要能画条，退回 64 权重映射
+            return markPlaceholder(new ItemStack(type, legacyAmount));
+        }
+        return filler;
     }
 
 
@@ -1313,9 +1473,11 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
     }
 
     /**
-     * 用 Cooler 自己的规则判断：只有 Slimefun 的 Juice 能放进去。
+     * 用具体容器自己的 {@link #isItemAllowed} 规则判断能否收纳。
+     * SmartCooler 只认 Slimefun 的 Juice；SmartBackpack 沿用 Slimefun 背包的默认过滤
+     * （非潜影盒、非背包）。
      */
-    public boolean isJuice(ItemStack item) {
+    public boolean isAllowedItem(ItemStack item) {
         return item != null
                 && !item.getType().isAir()
                 && isItemAllowed(item, SlimefunItem.getByItem(item));

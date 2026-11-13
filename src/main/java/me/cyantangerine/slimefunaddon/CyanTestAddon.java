@@ -4,6 +4,7 @@ import io.github.thebusybiscuit.slimefun4.core.attributes.Radioactivity;
 import io.github.thebusybiscuit.slimefun4.implementation.SlimefunItems;
 import io.github.thebusybiscuit.slimefun4.utils.LoreBuilder;
 import me.cyantangerine.slimefunaddon.item.FireCake;
+import me.cyantangerine.slimefunaddon.item.SmartBackpack;
 import me.cyantangerine.slimefunaddon.item.SmartCooler;
 import me.cyantangerine.slimefunaddon.model.ResourceLib;
 import org.bukkit.Material;
@@ -71,6 +72,20 @@ public class CyanTestAddon extends JavaPlugin implements SlimefunAddon {
                 RecipeType.ENHANCED_CRAFTING_TABLE, coolerRecipe
         );
         cooler.register(this);
+
+        // 智能背包：与冰柜共用 SmartContainer，只把堆叠上限系数从 1 提到 4。
+        // 配方里不放任何 SlimefunBackpack（包括官方 COOLER），避免走
+        // AbstractCraftingTable#upgradeBackpack 的「继承输入背包」语义。
+        ItemStack[] backpackRecipe = {
+                SlimefunItems.CLOTH, SlimefunItems.SYNTHETIC_SAPPHIRE, SlimefunItems.CLOTH,
+                SlimefunItems.SOLDER_INGOT, new ItemStack(Material.CHEST), SlimefunItems.SOLDER_INGOT,
+                SlimefunItems.GOLD_16K, SlimefunItems.ADVANCED_CIRCUIT_BOARD, SlimefunItems.GOLD_16K
+        };
+        SmartBackpack backpack = new SmartBackpack(
+                SmartBackpack.DEFAULT_SIZE, item2Group, SmartBackpack.createItemStack(),
+                RecipeType.ENHANCED_CRAFTING_TABLE, backpackRecipe
+        );
+        backpack.register(this);
 
         getLogger().log(Level.WARNING, "cyan 插件已启用！");
     }
