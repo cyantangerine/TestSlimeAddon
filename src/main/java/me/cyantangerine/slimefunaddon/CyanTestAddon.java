@@ -62,13 +62,14 @@ public class CyanTestAddon extends JavaPlugin implements SlimefunAddon {
         // 这条路径在 Folia 上曾因回调落在全局线程而报 "Cannot read world asynchronously"，
         // 已在本地 Slimefun fork 的 AbstractCraftingTable 中修复，请勿为了绕开它而改配方。
         ItemStack[] coolerRecipe = {
-                new ItemStack(Material.ICE), new ItemStack(Material.ICE), new ItemStack(Material.ICE),
-                new ItemStack(Material.ICE), SlimefunItems.COOLER, new ItemStack(Material.ICE),
-                new ItemStack(Material.ICE), new ItemStack(Material.ICE), new ItemStack(Material.ICE)
+                SlimefunItems.CLOTH, SlimefunItems.SYNTHETIC_SAPPHIRE, SlimefunItems.CLOTH,
+                SlimefunItems.SOLDER_INGOT, SlimefunItems.COOLER, SlimefunItems.SOLDER_INGOT,
+                SlimefunItems.GOLD_16K, SlimefunItems.ADVANCED_CIRCUIT_BOARD, SlimefunItems.GOLD_16K
         };
         SmartCooler cooler = new SmartCooler(
                 SmartCooler.DEFAULT_SIZE, item2Group, SmartCooler.createItemStack(),
-                RecipeType.ENHANCED_CRAFTING_TABLE, coolerRecipe);
+                RecipeType.ENHANCED_CRAFTING_TABLE, coolerRecipe
+        );
         cooler.register(this);
 
         getLogger().log(Level.WARNING, "cyan 插件已启用！");

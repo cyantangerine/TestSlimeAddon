@@ -78,7 +78,7 @@ public class SmartCooler extends SmartContainer implements Listener {
      * 容量：GUI 格数、Lore 进度条分母、占位玻璃瓶的最大堆叠数，三者统一用这个值。
      * 1.21 的收纳袋权重 = 数量 / 最大堆叠数，于是 used 个瓶子正好画出 used / CAPACITY。
      */
-    public static final int CAPACITY = 36;
+    public static final int CAPACITY = 54;
     /**
      * 新建背包时传给 Slimefun 的格数，与容量一致
      */

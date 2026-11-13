@@ -46,6 +46,7 @@ import org.bukkit.event.player.PlayerEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.BundleMeta;
@@ -131,7 +132,6 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
     protected abstract Material getDefaultPlaceholder();
     protected abstract Material getPlaceholder();
     protected abstract int getCapacity();
-
     /**
      * 造一个配套的物品模板。BUNDLE 才有收纳袋那种图标进度条；
      * ID / 所有者两行 lore 是 Slimefun 绑定背包用的，一行都不能删。
@@ -298,18 +298,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
     // ------------------------------------------------------------------
     // 手持右键容器：批量装载
     // ------------------------------------------------------------------
-
-    /** 容器里一个装着果汁的槽位快照（必须在方块所属区域线程读取）。 */
-    private record ContainerSlot(int slot, ItemStack stack) { }
-
-    /** 一次装载结果：总瓶数 + 按果汁名分组的数量。 */
-    private record LoadResult(int total, Map<String, Integer> byName) {
-        static LoadResult empty() {
-            return new LoadResult(0, Collections.emptyMap());
-        }
-    }
-
-    private void loadFromContainer(Player player, ItemStack coolerItem, Block block) {
+    protected void loadFromContainer(Player player, ItemStack coolerItem, Block block) {
         UUID uuid = player.getUniqueId();
         Object token = busyLock(uuid);
         if (token == null) return;
@@ -355,7 +344,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         });
     }
 
-    private List<ContainerSlot> collectItems(Inventory inv) {
+    protected List<ContainerSlot> collectItems(Inventory inv) {
         List<ContainerSlot> found = new ArrayList<>();
         for (int i = 0; i < inv.getSize(); i++) {
             ItemStack stack = inv.getItem(i);
@@ -367,7 +356,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
     }
 
     /** 扣容器 + 写背包，全部在同一个区域线程上完成，避免中途被别的线程改动造成复制/丢失。 */
-    private LoadResult transfer(Inventory container, PlayerBackpack backpack, List<ContainerSlot> found) {
+    protected LoadResult transfer(Inventory container, PlayerBackpack backpack, List<ContainerSlot> found) {
         Inventory target = backpack.getInventory();
         if (target == null) {
             return LoadResult.empty();
@@ -384,6 +373,8 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         if (free == 0) {
             return LoadResult.empty();
         }
+
+        // Material.GLASS_BOTTLE.getMaxStackSize();
 
         Map<String, Integer> byName = new LinkedHashMap<>();
         int total = 0;
@@ -428,7 +419,17 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         return new LoadResult(total, byName);
     }
 
-    private String loadMessage(LoadResult result) {
+    /** 容器里一个装着果汁的槽位快照（必须在方块所属区域线程读取）。 */
+    protected record ContainerSlot(int slot, ItemStack stack) { }
+
+    /** 一次装载结果：总瓶数 + 按果汁名分组的数量。 */
+    protected record LoadResult(int total, Map<String, Integer> byName) {
+        static LoadResult empty() {
+            return new LoadResult(0, Collections.emptyMap());
+        }
+    }
+
+    protected String loadMessage(LoadResult result) {
         StringBuilder message = new StringBuilder(ChatColor.GREEN + "已从容器装载 ")
                 .append(ChatColor.YELLOW).append(result.total())
                 .append(ChatColor.GREEN).append(" 个物品");
@@ -1261,6 +1262,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
                 bundle.setItems(List.of(createFiller(used)));
             }
         }
+
 //        else if (meta instanceof Damageable damageable && item.getType().getMaxDurability() > 0) {
 //            // 3) 没有用 BUNDLE 时的降级方案：耐久条
 //            int max = item.getType().getMaxDurability();
