@@ -6,6 +6,8 @@ import io.github.thebusybiscuit.slimefun4.utils.LoreBuilder;
 import me.cyantangerine.slimefunaddon.item.FireCake;
 import me.cyantangerine.slimefunaddon.item.SmartBackpack;
 import me.cyantangerine.slimefunaddon.item.SmartCooler;
+import me.cyantangerine.slimefunaddon.item.SmartStorageConnector;
+import me.cyantangerine.slimefunaddon.item.SmartStorageInterface;
 import me.cyantangerine.slimefunaddon.model.ResourceLib;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -86,6 +88,35 @@ public class CyanTestAddon extends JavaPlugin implements SlimefunAddon {
                 RecipeType.ENHANCED_CRAFTING_TABLE, backpackRecipe
         );
         backpack.register(this);
+
+        // ------------------------------------------------------------------
+        // 智能存储：连接器负责泛洪成网络，交互接口负责把网络里的容器聚合成一个分页 GUI。
+        // 两者都不是 SlimefunBackpack，配方里也不放任何背包物品，避免走
+        // AbstractCraftingTable#upgradeBackpack 的「继承输入背包」语义（Folia 上会炸）。
+        // ------------------------------------------------------------------
+        ItemStack[] connectorRecipe = {
+                null, SlimefunItems.SOLDER_INGOT, null,
+                SlimefunItems.SOLDER_INGOT, new ItemStack(Material.END_ROD), SlimefunItems.SOLDER_INGOT,
+                null, SlimefunItems.BASIC_CIRCUIT_BOARD, null
+        };
+        SmartStorageConnector connector = new SmartStorageConnector(
+                item2Group, SmartStorageConnector.createItemStack(),
+                RecipeType.ENHANCED_CRAFTING_TABLE, connectorRecipe
+        );
+        connector.register(this);
+
+        ItemStack[] interfaceRecipe = {
+                SlimefunItems.SOLDER_INGOT, SlimefunItems.ADVANCED_CIRCUIT_BOARD, SlimefunItems.SOLDER_INGOT,
+                SlimefunItems.CARGO_MOTOR, new ItemStack(Material.DISPENSER), SlimefunItems.CARGO_MOTOR,
+                SlimefunItems.GOLD_16K, SlimefunItems.ELECTRIC_MOTOR, SlimefunItems.GOLD_16K
+        };
+        SmartStorageInterface storageInterface = new SmartStorageInterface(
+                item2Group, SmartStorageInterface.createItemStack(),
+                RecipeType.ENHANCED_CRAFTING_TABLE, interfaceRecipe, connector
+        );
+        storageInterface.register(this);
+        // 让连接器在计算可视化链的入口时能认出交互接口
+        connector.setInterfaceItem(storageInterface);
 
         getLogger().log(Level.WARNING, "cyan 插件已启用！");
     }

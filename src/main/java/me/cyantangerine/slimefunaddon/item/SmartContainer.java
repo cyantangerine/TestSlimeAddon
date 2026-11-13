@@ -25,6 +25,7 @@ import java.util.function.Supplier;
 
 import lombok.Getter;
 import me.cyantangerine.slimefunaddon.model.ResourceLib;
+import me.cyantangerine.slimefunaddon.model.VanillaItemName;
 import me.cyantangerine.slimefunaddon.utils.Utils;
 import org.bukkit.ChatColor;
 import org.bukkit.GameMode;
@@ -557,7 +558,7 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         return message.toString();
     }
 
-    /** 装载汇总用的名字：Slimefun 物品用显示名，其余用自定义名 / 材质名。 */
+    /** 装载汇总用的名字：Slimefun 物品用显示名，其余用自定义名 / 原版中文名。 */
     private static String itemName(ItemStack stack) {
         SlimefunItem sfItem = SlimefunItem.getByItem(stack);
         if (sfItem != null) {
@@ -568,7 +569,8 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
         if (meta != null && meta.hasDisplayName()) {
             return meta.getDisplayName();
         }
-        return ChatColor.WHITE + stack.getType().name();
+        String chinese = VanillaItemName.of(stack.getType());
+        return ChatColor.WHITE + (chinese != null ? chinese : stack.getType().name());
     }
 
     /** 提示消息里容器自己的名字，找不到显示名时退回材质名。 */

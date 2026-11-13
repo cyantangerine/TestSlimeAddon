@@ -53,6 +53,14 @@
                     <include>*</include>
                 </includes>
             </resource>
+            <!-- 中文材质名表是纯数据，不做 Maven 变量过滤，避免编码 / ${} 被改写 -->
+            <resource>
+                <directory>${basedir}/src/main/resources</directory>
+                <filtering>false</filtering>
+                <includes>
+                    <include>lang/*.properties</include>
+                </includes>
+            </resource>
         </resources>
 
         <plugins>
@@ -72,8 +80,7 @@
                     <relocations>
                         <relocation>
                             <pattern>com.tcoded.folialib</pattern>
-                            <!-- !! MAKE SURE TO CHANGE THIS TO YOUR PLUGIN'S GROUP & PLUGIN NAME !! -->
-                            <shadedPattern>CHANGE-THE-GROUP.CHANGE-THE-PLUGIN-NAME.lib.folialib</shadedPattern>
+                            <shadedPattern>me.cyantangerine.slimefunaddon.lib.folialib</shadedPattern>
                         </relocation>
                     </relocations>
                 </configuration>
@@ -128,6 +135,8 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <version>1.18.30</version>
+            <!-- 只在编译期做注解处理，不要被 shade 打进产物 jar -->
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 </project>

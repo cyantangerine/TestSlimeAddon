@@ -1,2 +1,7 @@
 options:
   auto-update: true
+  # 智能存储交互界面「打开期间」是否冻结已连接容器的外部搬运（漏斗 / Slimefun 货运结点）。
+  # false（默认）：界面每 20 tick 实时刷新，漏斗与货运照常工作，显示自动跟上。
+  # true：打开期间拦截外部搬运，保证看到的数量与点击结果严格一致，但自动化会短暂停摆。
+  # 注意：无论此项如何设置，交互接口方块本身永远不接受红石 / 漏斗 / 货运。
+  smart-storage-lock-external-transfers: false
