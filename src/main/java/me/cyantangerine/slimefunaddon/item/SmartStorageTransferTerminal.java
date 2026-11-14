@@ -89,7 +89,7 @@ public class SmartStorageTransferTerminal extends SlimefunItem implements Listen
     private static final String TITLE_LOAD = colorize("&8智能存储加载终端 · 配置");
 
     private static final String NO_MEMBER = colorize(
-            "&c你需要至少是一个智能存储交互终端的成员，才能使用这个终端。");
+            "&c你需要至少是该存储网络内其中一个智能存储交互终端的成员，才能使用这个终端。");
     private static final String READ_ONLY = colorize("&e你没有管理员权限，配置页面为只读。");
     private static final String ADMIN_ONLY = colorize("&c只有管理员可以修改终端配置。");
     private static final String NOT_BOUND = colorize("&c背包尚未初始化，请先手持右键打开一次。");
@@ -126,25 +126,22 @@ public class SmartStorageTransferTerminal extends SlimefunItem implements Listen
         if (kind == Kind.UNLOAD) {
             return new SlimefunItemStack(UNLOAD_ID, Material.CAULDRON,
                     "&b智能存储背包卸载终端",
-                    "&7放置后通过智能存储连接器连接箱子",
-                    "&7手持智能背包 / 冰柜右键：把背包物品卸进网络容器",
-                    "&7空手或其它物品右键：打开 9×6 配置页",
-                    "&7模式：容器内叠加 / 黑名单 / 白名单",
-                    "&7可切换是否匹配 NBT / 附魔 / 耐久等标签",
-                    "&7默认 容器内叠加 + 匹配标签，配置按方块持久化",
-                    "&7需要至少是一个交互终端的成员才能执行卸载",
+                    "&7放置后，手持背包右键可自动存入对应物品",
+                    "&7需通过连接器连接到存储网络",
+                    "&7空手或其它物品右键可打开配置页",
+                    "&7模式：容器内叠加/黑名单/白名单",
+                    "&7可切换是否匹配NBT/附魔/耐久等标签",
+                    "&7需要至少是一个智能交互终端的成员才能执行卸载",
                     LoreBuilder.RIGHT_CLICK_TO_OPEN);
         }
         return new SlimefunItemStack(LOAD_ID, Material.DROPPER,
                 "&b智能存储背包加载终端",
-                "&7放置后通过智能存储连接器连接箱子",
-                "&7手持智能背包 / 冰柜右键：从网络容器加载物品进背包",
-                "&7空手或其它物品右键：打开 9×6 配置页",
-                "&7模式：背包内叠加 / 黑名单 / 白名单",
-                "&7可切换是否匹配 NBT / 附魔 / 耐久等标签",
-                "&7加载至满堆叠（默认，不占新槽）/ 加载所有",
-                "&7默认 背包内叠加 + 匹配标签 + 加载至满堆叠",
-                "&7需要至少是一个交互终端的成员才能执行加载",
+                "&7放置后，手持背包右键可自动取出对应物品",
+                "&7需通过连接器连接到存储网络",
+                "&7空手或其它物品右键可打开配置页",
+                "&7模式：背包内叠加/黑名单/白名单",
+                "&7可切换是否匹配NBT/附魔/耐久等标签",
+                "&7需要至少是一个智能交互终端的成员才能执行加载",
                 LoreBuilder.RIGHT_CLICK_TO_OPEN);
     }
 
@@ -393,7 +390,7 @@ public class SmartStorageTransferTerminal extends SlimefunItem implements Listen
                 colorize(session.fill
                         ? "&7只把背包已有堆叠补满，不新占用任何空槽"
                         : "&7加载所有匹配物品，允许使用背包的空槽"),
-                colorize("&7加载一律按背包槽位正序匹配"),
+                colorize("&7按背包槽位正序匹配"),
                 colorize("&e点击切换"));
     }
 
@@ -401,7 +398,7 @@ public class SmartStorageTransferTerminal extends SlimefunItem implements Listen
         return editable
                 ? named(Material.EMERALD, "&a权限：可修改",
                         colorize("&7你至少是一个交互终端的管理员"),
-                        colorize("&7可以切换按钮、编辑下方 40 格过滤列表"))
+                        colorize("&7可以切换按钮、编辑下方过滤列表"))
                 : named(Material.BARRIER, "&c权限：只读",
                         colorize("&7只有交互终端的管理员可以修改配置"),
                         colorize("&7你仍然可以查看当前配置"));

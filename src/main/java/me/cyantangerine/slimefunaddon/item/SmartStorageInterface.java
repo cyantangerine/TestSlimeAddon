@@ -192,15 +192,12 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
     public static SlimefunItemStack createItemStack() {
         return new SlimefunItemStack(ID, Material.OBSERVER,
                 "&b智能存储交互终端",
-                "&7放置后右键打开 9×6 存储界面",
-                "&7聚合 1 格内存储连接器所连接的所有容器",
+                "&7放置后右键打开容器交互界面",
+                "&7需通过存储连接器连接到网络，可操作网络内所有容器",
                 "&7左击物品 / 标记取出一组，右击取出一个",
                 "&7Shift+左击取一组到背包，Shift+右击取一个到背包",
                 "&7光标持有物品时点击界面可存入",
-                "&7菜单可切换标记显示与排序，容量监控显示已用容量",
-                "&7菜单提供容器内整理 / 跨容器整理 / 压缩整理",
-                "&7首个打开者自动成为管理员，可管理成员权限",
-                "&7潜行手持方块右键仍可正常放置方块",
+                "&7提供容器内整理/跨容器整理/压缩整理/权限管理",
                 "&7不响应红石、漏斗与 Slimefun 货运系统",
                 LoreBuilder.RIGHT_CLICK_TO_OPEN);
     }
@@ -1244,9 +1241,9 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
 
         List<String> lore = new ArrayList<>();
         lore.add(colorize("&7总数量 &f" + group.total + " &7/ 组数 &f" + group.groups));
-        if (group.groups > 64) {
-            lore.add(colorize("&8纸标记最多叠 64 张，实际组数以上方数字为准"));
-        }
+//        if (group.groups > 64) {
+//            // lore.add(colorize("&8纸标记最多叠 64 张，实际组数以上方数字为准"));
+//        }
         for (int i = 0; i < snapshot.containers.size(); i++) {
             int count = group.perContainer[i];
             if (count <= 0) {
@@ -1281,7 +1278,7 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
 
         List<String> lore = new ArrayList<>();
         lore.add(progressBar(percent));
-        lore.add(colorize("&7仅用于展示，点击无任何操作"));
+//        lore.add(colorize("&7仅用于展示，点击无任何操作"));
         for (int i = 0; i < snapshot.containers.size(); i++) {
             StorageNetwork.ContainerRef container = snapshot.containers.get(i);
             lore.add(colorize("&7· &f" + container.label
@@ -1327,11 +1324,10 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
     private static ItemStack toggleItem(boolean showLabels) {
         return named(Material.LEVER,
                 showLabels ? "&a显示标记和位置：开启" : "&c显示标记和位置：关闭",
-                colorize("&7点击切换标记（纸）与容器位置显示"),
+                colorize("&7点击切换标记与容器位置显示"),
                 colorize(showLabels
-                        ? "&7当前：每页 &f20 &7种（物品 + 标记各一格）"
-                        : "&7当前：每页 &f40 &7种（物品数量 = 真实总数）"),
-                colorize("&7设置保存在当前这个交互接口方块上"));
+                        ? "&7当前：每页 &f20 &7种"
+                        : "&7当前：每页 &f40 &7种"));
     }
 
     private static ItemStack sortItem(StorageSnapshot.SortMode mode) {
@@ -1340,7 +1336,6 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
         for (StorageSnapshot.SortMode candidate : StorageSnapshot.SortMode.values()) {
             lore.add(colorize((candidate == mode ? "&a» &f" : "&8  &7") + candidate.display()));
         }
-        lore.add(colorize("&7设置保存在当前这个交互接口方块上"));
         return named(Material.COMPARATOR, "&6排序：" + mode.display(),
                 lore.toArray(new String[0]));
     }
@@ -1367,7 +1362,7 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
                     colorize("&e点击立即执行"));
             case LOCAL -> named(Material.CHEST, "&6整理物品（每个容器内）",
                     colorize("&7只在每一个容器内部把同类物品堆叠满"),
-                    colorize("&7并从 0 号槽开始紧凑排布，减少槽位占用"),
+                    colorize("&7并从左上开始紧凑排布，减少槽位占用"),
                     colorize("&7物品不会跨容器移动"),
                     colorize("&e点击立即执行"));
         };

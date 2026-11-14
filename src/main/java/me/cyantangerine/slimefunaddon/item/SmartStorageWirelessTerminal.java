@@ -93,12 +93,11 @@ public class SmartStorageWirelessTerminal extends SlimefunItem implements Listen
 
     public static SlimefunItemStack createItemStack() {
         return new SlimefunItemStack(ID, Material.ENDER_EYE,
-                "&b智能存储无线交互终端 &7(未绑定)",
-                "&7不可放置",
-                "&7右键已放置的智能存储交互终端 → 输入名称完成绑定",
-                "&7绑定后手持 / 在物品栏右键即可打开该终端的存储界面",
+                "&b智能存储无线交互终端",
+                "&7需右键已放置的智能存储交互终端并输入名称完成绑定",
+                "&7绑定后手持/在物品栏右键即可打开该终端的存储界面",
                 "&7若绑定的终端方块被破坏，使用时会自动解除绑定",
-                LoreBuilder.RIGHT_CLICK_TO_USE);
+                LoreBuilder.RIGHT_CLICK_TO_OPEN);
     }
 
     // ------------------------------------------------------------------

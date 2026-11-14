@@ -113,13 +113,11 @@ public class SmartStorageConnector extends SlimefunItem implements Listener {
         // 一次制作 8 个：增强工作台会克隆输出物品，保留其数量，所以这里把数量设为 8。
         SlimefunItemStack stack = new SlimefunItemStack(ID, Material.END_ROD,
                 "&a智能存储连接器",
-                "&7放置后连接上下左右前后 1 格的箱子 / 木桶",
-                "&7遇到其它连接器会泛洪成一条链",
-                "&7单条链最多 32 个容器（大箱子算 1 个）",
-                "&7箱子不会把两条独立的链合并",
-                "&e右键 &7切换整条链的黄色粒子可视化",
-                "&7潜行手持方块右键仍可正常放置方块",
-                "&7一次合成 &e8 &7个");
+                "&7放置后连接直线1格的箱子/木桶/其他连接器",
+                "&7单一连接网络内最多连接 32 个容器",
+                "&7可使用智能存储交互终端进行多容器存取",
+                "&e右键 &7切换整条链的黄色粒子可视化"
+        );
         stack.setAmount(8);
         return stack;
     }

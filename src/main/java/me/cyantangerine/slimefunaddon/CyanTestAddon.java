@@ -40,21 +40,21 @@ public class CyanTestAddon extends JavaPlugin implements SlimefunAddon {
             // 你可以在这里添加自动更新功能
         }
 
-        NamespacedKey categoryId = new NamespacedKey(this, "cool_category");
-        CustomItemStack categoryItem = new CustomItemStack(Material.DIAMOND, "&4非常炫酷的分类");
-// 创建物品组 ItemGroup
-        ItemGroup itemGroup = new ItemGroup(categoryId, categoryItem);
-// 粘液物品 SlimefunItem 的物品 SlimefunItemStack
-        SlimefunItemStack itemStack = new SlimefunItemStack("FIRE_CAKE", Material.CAKE, "&4火焰蛋糕", "", LoreBuilder.radioactive(Radioactivity.HIGH), LoreBuilder.HAZMAT_SUIT_REQUIRED);
-// 3x3 的有序合成配方
-        ItemStack[] recipe = {
-                new ItemStack(Material.DIAMOND),    null,                               new ItemStack(Material.DIAMOND),
-                null,                               SlimefunItems.CARBONADO,            null,
-                new ItemStack(Material.DIAMOND),    null,                               new ItemStack(Material.DIAMOND)
-        };
-// 我们现在正在使用自己的类
-        FireCake cake = new FireCake(itemGroup, itemStack, RecipeType.ENHANCED_CRAFTING_TABLE, recipe);
-        cake.register(this);
+//        NamespacedKey categoryId = new NamespacedKey(this, "cool_category");
+//        CustomItemStack categoryItem = new CustomItemStack(Material.DIAMOND, "&4非常炫酷的分类");
+//// 创建物品组 ItemGroup
+//        ItemGroup itemGroup = new ItemGroup(categoryId, categoryItem);
+//// 粘液物品 SlimefunItem 的物品 SlimefunItemStack
+//        SlimefunItemStack itemStack = new SlimefunItemStack("FIRE_CAKE", Material.CAKE, "&4火焰蛋糕", "", LoreBuilder.radioactive(Radioactivity.HIGH), LoreBuilder.HAZMAT_SUIT_REQUIRED);
+//// 3x3 的有序合成配方
+//        ItemStack[] recipe = {
+//                new ItemStack(Material.DIAMOND),    null,                               new ItemStack(Material.DIAMOND),
+//                null,                               SlimefunItems.CARBONADO,            null,
+//                new ItemStack(Material.DIAMOND),    null,                               new ItemStack(Material.DIAMOND)
+//        };
+//// 我们现在正在使用自己的类
+//        FireCake cake = new FireCake(itemGroup, itemStack, RecipeType.ENHANCED_CRAFTING_TABLE, recipe);
+//        cake.register(this);
 
 
         NamespacedKey category2Id = new NamespacedKey(this, "smart_devices");
@@ -103,7 +103,7 @@ public class CyanTestAddon extends JavaPlugin implements SlimefunAddon {
         ItemStack[] connectorRecipe = {
                 SlimefunItems.SOLDER_INGOT, SlimefunItems.SOLDER_INGOT, SlimefunItems.SOLDER_INGOT,
                 SlimefunItems.SOLDER_INGOT, new ItemStack(Material.HOPPER), SlimefunItems.SOLDER_INGOT,
-                null, SlimefunItems.ELECTRIC_MOTOR, null
+                SlimefunItems.SOLDER_INGOT, SlimefunItems.ELECTRIC_MOTOR, SlimefunItems.SOLDER_INGOT
         };
         SmartStorageConnector connector = new SmartStorageConnector(
                 item2Group, SmartStorageConnector.createItemStack(),
