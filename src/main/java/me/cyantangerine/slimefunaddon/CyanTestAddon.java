@@ -109,6 +109,11 @@ public class CyanTestAddon extends JavaPlugin implements SlimefunAddon {
                 item2Group, SmartStorageConnector.createItemStack(),
                 RecipeType.ENHANCED_CRAFTING_TABLE, connectorRecipe
         );
+        // 一次合成 8 个：把「配方产出」单独设成 8 份，而不是改物品模板的数量。
+        // 物品模板保持 1 个（破坏方块时只掉 1 个），否则「放置 1 个 -> 破坏掉 8 个」可无限刷。
+        // Slimefun 在 load() 里用 getRecipeOutput() 注册配方产出，必须在 register() 之前设置。
+        connector.setRecipeOutput(new SlimefunItemStack(
+                SmartStorageConnector.createItemStack(), 8));
         connector.register(this);
 
         ItemStack[] interfaceRecipe = {

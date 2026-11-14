@@ -110,16 +110,17 @@ public class SmartStorageConnector extends SlimefunItem implements Listener {
     }
 
     public static SlimefunItemStack createItemStack() {
-        // 一次制作 8 个：增强工作台会克隆输出物品，保留其数量，所以这里把数量设为 8。
-        SlimefunItemStack stack = new SlimefunItemStack(ID, Material.END_ROD,
+        // 物品模板数量必须是 1：Slimefun 破坏方块时的掉落走 getDrops() ->
+        // itemStackTemplate.clone()，模板若为 8 则「放置 1 个、破坏掉 8 个」可无限刷物品。
+        // 「一次合成 8 个」在 CyanTestAddon 注册时通过 setRecipeOutput(独立 8 份产出) 实现，
+        // 配方产出与物品模板分离，互不影响。
+        return new SlimefunItemStack(ID, Material.END_ROD,
                 "&a智能存储连接器",
                 "&7放置后连接直线1格的箱子/木桶/其他连接器",
                 "&7单一连接网络内最多连接 32 个容器",
                 "&7可使用智能存储交互终端进行多容器存取",
                 "&e右键 &7切换整条链的黄色粒子可视化"
         );
-        stack.setAmount(8);
-        return stack;
     }
 
     // ------------------------------------------------------------------

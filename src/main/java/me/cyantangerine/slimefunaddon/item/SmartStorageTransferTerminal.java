@@ -6,6 +6,7 @@ import io.github.thebusybiscuit.slimefun4.api.items.SlimefunItem;
 import io.github.thebusybiscuit.slimefun4.api.items.SlimefunItemStack;
 import io.github.thebusybiscuit.slimefun4.api.player.PlayerBackpack;
 import io.github.thebusybiscuit.slimefun4.api.recipes.RecipeType;
+import io.github.thebusybiscuit.slimefun4.core.handlers.BlockBreakHandler;
 import io.github.thebusybiscuit.slimefun4.core.handlers.BlockUseHandler;
 import io.github.thebusybiscuit.slimefun4.utils.LoreBuilder;
 import me.cyantangerine.slimefunaddon.model.ResourceLib;
@@ -25,6 +26,7 @@ import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
@@ -119,6 +121,15 @@ public class SmartStorageTransferTerminal extends SlimefunItem implements Listen
         plugin = getAddon().getJavaPlugin();
         resourceLib = Utils.initialCheck(plugin);
         addItemHandler((BlockUseHandler) this::onRightClick);
+        // 玩家敲掉方块时（onPlayerBreak 在 Slimefun 清 BlockStorage 之前调用，能读到过滤数据），
+        // 把过滤栏里的模板物品掉落到地面。两个 boolean 分别是 allowAndroids / allowExplosions，
+        // 都设为 false 保持原版保护（不可以被机器人 / 爆炸破坏，自然也不会丢过滤物品）。
+        addItemHandler(new BlockBreakHandler(false, false) {
+            @Override
+            public void onPlayerBreak(BlockBreakEvent event, ItemStack item, List<ItemStack> drops) {
+                dropFilters(event.getBlock().getLocation());
+            }
+        });
         Bukkit.getPluginManager().registerEvents(this, plugin);
     }
 
@@ -241,6 +252,31 @@ public class SmartStorageTransferTerminal extends SlimefunItem implements Listen
             // 存档损坏时退回空过滤表，不能让界面打不开
         }
         return filters;
+    }
+
+    // ------------------------------------------------------------------
+    // 破坏时掉落过滤栏
+    // ------------------------------------------------------------------
+
+    /**
+     * 终端方块被玩家敲掉时，把过滤栏里已配置的模板物品掉落到地面。
+     * 通过 {@link BlockBreakHandler#onPlayerBreak} 触发——Slimefun 在清除 BlockStorage
+     * 之前就会调用它，所以这里能可靠读到过滤数据；而普通的 {@code BlockBreakEvent}
+     * MONITOR 监听在那时数据可能已被清空，读不到。
+     */
+    private void dropFilters(Location location) {
+        if (location == null || location.getWorld() == null) {
+            return;
+        }
+        // 清理仍打开配置页的会话，避免后续把配置写回已经消失的方块
+        views.values().removeIf(session -> session.blockLocation != null
+                && session.blockLocation.equals(location));
+        List<ItemStack> filters = decodeFilters(BlockStorage.getLocationInfo(location, FILTERS_KEY));
+        for (ItemStack filter : filters) {
+            if (filter != null) {
+                location.getWorld().dropItemNaturally(location, filter);
+            }
+        }
     }
 
     // ------------------------------------------------------------------
