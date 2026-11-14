@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 智能存储交互接口菜单里的三种「整理」操作。
+ * 智能存储交互终端菜单里的三种「整理」操作。
  *
  * <p>全部基于 {@link StorageNetwork.Network#containers} 的缓存 {@link Inventory}，
  * 顺序就是「距离升序 → 方向序 → 坐标」；下标越小代表容器离接口越近。

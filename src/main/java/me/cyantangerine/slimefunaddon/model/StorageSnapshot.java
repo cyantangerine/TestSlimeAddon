@@ -292,13 +292,20 @@ public final class StorageSnapshot {
      * 界面类给「物品格」拼展示名时也复用这一套，避免两处命名规则分叉。
      */
     public static String itemName(ItemStack stack) {
+        ItemMeta meta = stack.getItemMeta();
+        // 自定义显示名优先：含玩家重命名的 Slimefun 物品（如改名的背包 / 无线终端）。
+        // 普通 Slimefun 物品的显示名本身写在 ItemMeta 里，所以没改名时这里取到的就是原名，
+        // 改名后才返回玩家输入的名字，从而避免「带改名 Slimefun 物品只显示原始名称」的问题。
+        if (meta != null) {
+            String display = meta.getDisplayName();
+            if (display != null && !display.isEmpty()) {
+                return display;
+            }
+        }
+        // 没有自定义显示名时，Slimefun 物品退回其注册名
         SlimefunItem slimefunItem = SlimefunItem.getByItem(stack);
         if (slimefunItem != null) {
             return slimefunItem.getItemName();
-        }
-        ItemMeta meta = stack.getItemMeta();
-        if (meta != null && meta.hasDisplayName()) {
-            return meta.getDisplayName();
         }
         String chinese = VanillaItemName.of(stack.getType());
         return ChatColor.WHITE + (chinese != null ? chinese : stack.getType().name());

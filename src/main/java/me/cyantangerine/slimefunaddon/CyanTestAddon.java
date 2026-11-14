@@ -8,6 +8,8 @@ import me.cyantangerine.slimefunaddon.item.SmartBackpack;
 import me.cyantangerine.slimefunaddon.item.SmartCooler;
 import me.cyantangerine.slimefunaddon.item.SmartStorageConnector;
 import me.cyantangerine.slimefunaddon.item.SmartStorageInterface;
+import me.cyantangerine.slimefunaddon.item.SmartStorageTransferTerminal;
+import me.cyantangerine.slimefunaddon.item.SmartStorageWirelessTerminal;
 import me.cyantangerine.slimefunaddon.model.ResourceLib;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -76,11 +78,14 @@ public class CyanTestAddon extends JavaPlugin implements SlimefunAddon {
         cooler.register(this);
 
         // 智能背包：与冰柜共用 SmartContainer，只把堆叠上限系数从 1 提到 4。
-        // 配方里不放任何 SlimefunBackpack（包括官方 COOLER），避免走
-        // AbstractCraftingTable#upgradeBackpack 的「继承输入背包」语义。
+        // 配方中心用 Slimefun 最高级背包（辐射背包 RADIANT_BACKPACK，54 格），
+        // 因此会走 AbstractCraftingTable#upgradeBackpack 的「继承输入背包」语义：
+        // 合成时会把中心那个辐射背包里已有的物品继承到新的智能背包里。
+        // 这条路径在本地 Slimefun fork 的 AbstractCraftingTable 中已修复（Folia 上不炸），
+        // 与冰柜中心用 COOLER 升级是同一套机制。
         ItemStack[] backpackRecipe = {
                 SlimefunItems.CLOTH, SlimefunItems.SYNTHETIC_SAPPHIRE, SlimefunItems.CLOTH,
-                SlimefunItems.SOLDER_INGOT, new ItemStack(Material.CHEST), SlimefunItems.SOLDER_INGOT,
+                SlimefunItems.SOLDER_INGOT, SlimefunItems.RADIANT_BACKPACK, SlimefunItems.SOLDER_INGOT,
                 SlimefunItems.GOLD_16K, SlimefunItems.ADVANCED_CIRCUIT_BOARD, SlimefunItems.GOLD_16K
         };
         SmartBackpack backpack = new SmartBackpack(
@@ -93,11 +98,12 @@ public class CyanTestAddon extends JavaPlugin implements SlimefunAddon {
         // 智能存储：连接器负责泛洪成网络，交互接口负责把网络里的容器聚合成一个分页 GUI。
         // 两者都不是 SlimefunBackpack，配方里也不放任何背包物品，避免走
         // AbstractCraftingTable#upgradeBackpack 的「继承输入背包」语义（Folia 上会炸）。
+        // 连接器配方：7 个焊锡锭包裹漏斗，底部为电动马达；外观末地烛不变，一次合成 8 个。
         // ------------------------------------------------------------------
         ItemStack[] connectorRecipe = {
-                null, SlimefunItems.SOLDER_INGOT, null,
-                SlimefunItems.SOLDER_INGOT, new ItemStack(Material.END_ROD), SlimefunItems.SOLDER_INGOT,
-                null, SlimefunItems.BASIC_CIRCUIT_BOARD, null
+                SlimefunItems.SOLDER_INGOT, SlimefunItems.SOLDER_INGOT, SlimefunItems.SOLDER_INGOT,
+                SlimefunItems.SOLDER_INGOT, new ItemStack(Material.HOPPER), SlimefunItems.SOLDER_INGOT,
+                null, SlimefunItems.ELECTRIC_MOTOR, null
         };
         SmartStorageConnector connector = new SmartStorageConnector(
                 item2Group, SmartStorageConnector.createItemStack(),
@@ -107,16 +113,56 @@ public class CyanTestAddon extends JavaPlugin implements SlimefunAddon {
 
         ItemStack[] interfaceRecipe = {
                 SlimefunItems.SOLDER_INGOT, SlimefunItems.ADVANCED_CIRCUIT_BOARD, SlimefunItems.SOLDER_INGOT,
-                SlimefunItems.CARGO_MOTOR, new ItemStack(Material.DISPENSER), SlimefunItems.CARGO_MOTOR,
-                SlimefunItems.GOLD_16K, SlimefunItems.ELECTRIC_MOTOR, SlimefunItems.GOLD_16K
+                SlimefunItems.CARGO_MOTOR, new ItemStack(Material.OBSERVER), SlimefunItems.CARGO_MOTOR,
+                SlimefunItems.GOLD_24K, SlimefunItems.ELECTRIC_MOTOR, SlimefunItems.GOLD_24K
         };
         SmartStorageInterface storageInterface = new SmartStorageInterface(
                 item2Group, SmartStorageInterface.createItemStack(),
                 RecipeType.ENHANCED_CRAFTING_TABLE, interfaceRecipe, connector
         );
         storageInterface.register(this);
-        // 让连接器在计算可视化链的入口时能认出交互接口
+        // 让连接器在计算可视化链的入口时能认出交互终端
         connector.setInterfaceItem(storageInterface);
+
+        // ------------------------------------------------------------------
+        // 背包卸载 / 加载终端：同样是「可放置方块 + 相邻连接器泛洪出容器网络」。
+        // 手持智能背包 / 冰柜右键执行搬运，空手右键打开 9×6 配置页。
+        // ------------------------------------------------------------------
+        ItemStack[] unloadRecipe = {
+                SlimefunItems.BRASS_INGOT, SlimefunItems.BASIC_CIRCUIT_BOARD, SlimefunItems.BRASS_INGOT,
+                SlimefunItems.ELECTRIC_MOTOR, new ItemStack(Material.LODESTONE), SlimefunItems.ELECTRIC_MOTOR,
+                SlimefunItems.GOLD_24K, SlimefunItems.CARGO_MOTOR, SlimefunItems.GOLD_24K
+        };
+        SmartStorageTransferTerminal unloadTerminal = new SmartStorageTransferTerminal(
+                SmartStorageTransferTerminal.Kind.UNLOAD, item2Group,
+                SmartStorageTransferTerminal.createItemStack(SmartStorageTransferTerminal.Kind.UNLOAD),
+                RecipeType.ENHANCED_CRAFTING_TABLE, unloadRecipe, connector, storageInterface
+        );
+        unloadTerminal.register(this);
+
+        ItemStack[] loadRecipe = {
+                SlimefunItems.BILLON_INGOT, SlimefunItems.BASIC_CIRCUIT_BOARD, SlimefunItems.BILLON_INGOT,
+                SlimefunItems.ELECTRIC_MOTOR, new ItemStack(Material.DROPPER), SlimefunItems.ELECTRIC_MOTOR,
+                SlimefunItems.GOLD_24K, SlimefunItems.CARGO_MOTOR, SlimefunItems.GOLD_24K
+        };
+        SmartStorageTransferTerminal loadTerminal = new SmartStorageTransferTerminal(
+                SmartStorageTransferTerminal.Kind.LOAD, item2Group,
+                SmartStorageTransferTerminal.createItemStack(SmartStorageTransferTerminal.Kind.LOAD),
+                RecipeType.ENHANCED_CRAFTING_TABLE, loadRecipe, connector, storageInterface
+        );
+        loadTerminal.register(this);
+
+        // 无线交互终端：不可放置，右键已放置的交互终端输入名称完成绑定。
+        ItemStack[] wirelessRecipe = {
+                SlimefunItems.SOLDER_INGOT, SlimefunItems.ADVANCED_CIRCUIT_BOARD, SlimefunItems.SOLDER_INGOT,
+                SlimefunItems.CARGO_MOTOR, new ItemStack(Material.ENDER_EYE), SlimefunItems.CARGO_MOTOR,
+                SlimefunItems.GOLD_24K, new ItemStack(Material.END_ROD), SlimefunItems.GOLD_24K
+        };
+        SmartStorageWirelessTerminal wirelessTerminal = new SmartStorageWirelessTerminal(
+                item2Group, SmartStorageWirelessTerminal.createItemStack(),
+                RecipeType.ENHANCED_CRAFTING_TABLE, wirelessRecipe, storageInterface
+        );
+        wirelessTerminal.register(this);
 
         getLogger().log(Level.WARNING, "cyan 插件已启用！");
     }

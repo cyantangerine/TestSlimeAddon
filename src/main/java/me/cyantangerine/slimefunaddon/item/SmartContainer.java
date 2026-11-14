@@ -27,6 +27,7 @@ import lombok.Getter;
 import me.cyantangerine.slimefunaddon.model.ResourceLib;
 import me.cyantangerine.slimefunaddon.model.VanillaItemName;
 import me.cyantangerine.slimefunaddon.utils.Utils;
+import me.mrCookieSlime.Slimefun.api.BlockStorage;
 import org.bukkit.ChatColor;
 import org.bukkit.GameMode;
 import org.bukkit.Material;
@@ -247,6 +248,31 @@ public abstract class SmartContainer extends SlimefunBackpack implements Listene
             watchInitialization(player, item);
             parent.onRightClick(event);
             return;
+        }
+
+        // 智能存储终端优先于「手持背包右键容器」：
+        // 交互终端（发射器材质）本身会被 Utils.isContainerBlock 认成容器，
+        // 但右键它应该走「扫描整条连接器网络装载」，而不是读发射器自己的 9 格。
+        // ItemUseHandler 先于 BlockUseHandler 执行，这里 cancel 之后终端也不会再打开 GUI。
+        if (interact.getAction() == Action.RIGHT_CLICK_BLOCK) {
+            Block terminalBlock = interact.getClickedBlock();
+            if (terminalBlock != null) {
+                SlimefunItem terminal = BlockStorage.check(terminalBlock);
+                if (terminal instanceof SmartStorageInterface storageInterface) {
+                    event.cancel();
+                    interact.setUseItemInHand(Event.Result.DENY);
+                    interact.setUseInteractedBlock(Event.Result.DENY);
+                    storageInterface.loadNetworkIntoBackpack(this, player, item, terminalBlock);
+                    return;
+                }
+                if (terminal instanceof SmartStorageTransferTerminal transferTerminal) {
+                    event.cancel();
+                    interact.setUseItemInHand(Event.Result.DENY);
+                    interact.setUseInteractedBlock(Event.Result.DENY);
+                    transferTerminal.execute(this, player, item, terminalBlock);
+                    return;
+                }
+            }
         }
 
         switch (interact.getAction()) {

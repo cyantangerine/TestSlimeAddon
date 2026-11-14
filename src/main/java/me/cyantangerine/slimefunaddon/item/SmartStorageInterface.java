@@ -5,10 +5,12 @@ import io.github.thebusybiscuit.slimefun4.api.events.PlayerRightClickEvent;
 import io.github.thebusybiscuit.slimefun4.api.items.ItemGroup;
 import io.github.thebusybiscuit.slimefun4.api.items.SlimefunItem;
 import io.github.thebusybiscuit.slimefun4.api.items.SlimefunItemStack;
+import io.github.thebusybiscuit.slimefun4.api.player.PlayerBackpack;
 import io.github.thebusybiscuit.slimefun4.api.recipes.RecipeType;
 import io.github.thebusybiscuit.slimefun4.core.handlers.BlockUseHandler;
 import io.github.thebusybiscuit.slimefun4.utils.LoreBuilder;
 import me.cyantangerine.slimefunaddon.model.ResourceLib;
+import me.cyantangerine.slimefunaddon.model.StorageAccess;
 import me.cyantangerine.slimefunaddon.model.StorageNetwork;
 import me.cyantangerine.slimefunaddon.model.StorageOrganizer;
 import me.cyantangerine.slimefunaddon.model.StorageSnapshot;
@@ -52,7 +54,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 智能存储交互接口（发射器物品，放置后生效）。
+ * 智能存储交互终端（发射器物品，放置后生效）。
  *
  * <p><b>只认右键</b>：{@link BlockUseHandler} 里 {@code cancel()} 掉原版开箱 /
  * 手持使用，同时拦掉 {@link BlockDispenseEvent}（红石）、{@link InventoryMoveItemEvent}
@@ -131,9 +133,9 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
     private static final long REFRESH_PERIOD_TICKS = 20L;
     private static final int FULL_REDISCOVER_EVERY = 5;
 
-    private static final String GUI_TITLE = colorize("&8智能存储交互接口");
-    private static final String PERMISSION_TITLE = colorize("&8智能存储 · 权限管理");
-    private static final String ADD_PLAYER_TITLE = colorize("&8智能存储 · 添加玩家");
+    private static final String GUI_TITLE = colorize("&8智能存储交互终端");
+    private static final String PERMISSION_TITLE = colorize("&8智能存储交互终端 · 权限管理");
+    private static final String ADD_PLAYER_TITLE = colorize("&8智能存储交互终端 · 添加玩家");
 
     private static final String STORAGE_FULL = colorize(
             "&c存储已满：连接的箱子里没有空位，且对应物品已达到堆叠上限，无法存入。");
@@ -143,7 +145,7 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
             "&e存储空间不足，仅存入 &f%d &e个，剩余已退回。");
     private static final String NO_CONNECTOR = colorize("&7尚未通过存储连接器连接任何容器。");
     private static final String NO_PERMISSION = colorize(
-            "&c你没有权限使用这个智能存储交互接口，请联系管理员添加。");
+            "&c你没有权限使用这个智能存储交互终端，请联系管理员添加。");
     private static final String BECOME_ADMIN = colorize(
             "&a你是第一个打开该接口的玩家，已自动成为管理员。");
     private static final String ADMIN_ONLY = colorize("&c只有管理员可以修改权限。");
@@ -178,6 +180,7 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
         super.preRegister();
         plugin = getAddon().getJavaPlugin();
         resourceLib = Utils.initialCheck(plugin);
+        StorageAccess.init(plugin);
         // 缺失该键时 Bukkit 的 getBoolean 返回 false，老配置文件也能平滑升级
         lockExternalTransfers = resourceLib.getConfig()
                 .getBoolean("options.smart-storage-lock-external-transfers");
@@ -187,8 +190,8 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
     }
 
     public static SlimefunItemStack createItemStack() {
-        return new SlimefunItemStack(ID, Material.DISPENSER,
-                "&b智能存储交互接口",
+        return new SlimefunItemStack(ID, Material.OBSERVER,
+                "&b智能存储交互终端",
                 "&7放置后右键打开 9×6 存储界面",
                 "&7聚合 1 格内存储连接器所连接的所有容器",
                 "&7左击物品 / 标记取出一组，右击取出一个",
@@ -230,8 +233,19 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
         interact.setUseItemInHand(Event.Result.DENY);
         interact.setUseInteractedBlock(Event.Result.DENY);
 
-        Player player = event.getPlayer();
+        openFrom(event.getPlayer(), block);
+    }
+
+    /**
+     * 打开存储界面的统一入口：方块右键与无线终端远程打开都走这里，
+     * 所以两者的 ACL 校验、首个打开者自动成为管理员的行为完全一致。
+     */
+    public void openFrom(Player player, Block block) {
+        if (player == null || block == null || BlockStorage.check(block) != this) {
+            return;
+        }
         Location location = block.getLocation();
+        StorageAccess.register(location);
         Acl acl = readAcl(location);
         if (acl.role(player.getUniqueId()) == Role.NONE) {
             if (acl.isEmpty() || !acl.hasAdmin()) {
@@ -244,6 +258,30 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
             }
         }
         open(player, block);
+    }
+
+    /**
+     * 全局权限判定用：读取某个位置上的交互终端 ACL，返回玩家角色。
+     * 0 = 无权限，1 = 普通成员，2 = 管理员，-1 = 该位置已经不是交互终端
+     * （调用方会据此把失效坐标从登记表里剔除）。
+     */
+    public static int roleAt(Location location, UUID uuid) {
+        if (location == null || uuid == null) {
+            return -1;
+        }
+        try {
+            if (!(BlockStorage.check(location) instanceof SmartStorageInterface)) {
+                return -1;
+            }
+            Acl acl = Acl.parse(BlockStorage.getLocationInfo(location, ACL_KEY));
+            return switch (acl.role(uuid)) {
+                case NONE -> 0;
+                case MEMBER -> 1;
+                case ADMIN -> 2;
+            };
+        } catch (RuntimeException | LinkageError ignored) {
+            return -1;
+        }
     }
 
     /** 发射器收到红石脉冲会尝试发射物品，这里直接掐掉。 */
@@ -593,6 +631,106 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
         }
     }
 
+    // ------------------------------------------------------------------
+    // 手持智能背包 / 冰柜右键本终端：把整个网络的容器批量装载进背包
+    // ------------------------------------------------------------------
+
+    /**
+     * 需求 1：SmartCooler / SmartBackpack 装载时，如果右键的是交互终端，
+     * 就扫描终端连接的所有容器，把「该背包允许装载」的物品尽量装进背包。
+     *
+     * <p>由 {@link SmartContainer#onHeldRightClick} 在 ItemUseHandler 里调用。
+     * 那时事件已经被 cancel，本终端的 BlockUseHandler 不会再打开 GUI；
+     * 但 GUI 的 ACL 校验必须在这里补上，否则手持背包就能绕过权限读走网络里的东西。</p>
+     */
+    public void loadNetworkIntoBackpack(SmartContainer container, Player player,
+                                        ItemStack backpackItem, Block block) {
+        if (container == null || player == null || block == null
+                || BlockStorage.check(block) != this) {
+            return;
+        }
+        Location location = block.getLocation();
+        StorageAccess.register(location);
+
+        Acl acl = readAcl(location);
+        UUID uuid = player.getUniqueId();
+        if (acl.role(uuid) == Role.NONE) {
+            if (acl.isEmpty() || !acl.hasAdmin()) {
+                writeAcl(location, acl.with(uuid, player.getName(), true));
+                player.sendMessage(BECOME_ADMIN);
+            } else {
+                player.sendMessage(NO_PERMISSION);
+                return;
+            }
+        }
+
+        Object token = container.busyLock(uuid);
+        if (token == null) {
+            return;
+        }
+        container.scheduleUnlock(uuid, token);
+
+        resourceLib.runAtBlock(block, ignored -> {
+            List<Source> sources = new ArrayList<>();
+            try {
+                StorageNetwork.Network network =
+                        StorageNetwork.discover(location, connectorItem, this);
+                for (StorageNetwork.ContainerRef ref : network.containers) {
+                    List<SmartContainer.ContainerSlot> found = container.collectItems(ref.inventory);
+                    if (!found.isEmpty()) {
+                        sources.add(new Source(ref.inventory, found));
+                    }
+                }
+            } catch (RuntimeException | LinkageError ex) {
+                resourceLib.warn("扫描智能存储交互终端网络失败", ex);
+                container.busyUnlock(uuid, token);
+                return;
+            }
+            if (sources.isEmpty()) {
+                container.busyUnlock(uuid, token);
+                String empty = container.getLoadErrorMsg();
+                resourceLib.runAtEntity(player, () -> player.sendMessage(empty));
+                return;
+            }
+
+            List<Source> snapshot = List.copyOf(sources);
+            container.readBackpack(backpackItem,
+                    backpack -> resourceLib.runAtBlock(block, task -> {
+                        try {
+                            int total = 0;
+                            Map<String, Integer> byName = new LinkedHashMap<>();
+                            for (Source source : snapshot) {
+                                SmartContainer.LoadResult part = container.transfer(
+                                        source.inventory(), backpack, source.found());
+                                total += part.total();
+                                for (Map.Entry<String, Integer> entry : part.byName().entrySet()) {
+                                    byName.merge(entry.getKey(), entry.getValue(), Integer::sum);
+                                }
+                            }
+                            if (total <= 0) {
+                                resourceLib.runAtEntity(player, () -> player.sendMessage(colorize(
+                                        "&e背包已满或网络里没有可装载的物品，本次未装载任何东西。")));
+                                return;
+                            }
+                            container.saveBackpack(backpack, backpackItem);
+                            String message = container.loadMessage(
+                                    new SmartContainer.LoadResult(total, byName));
+                            resourceLib.runAtEntity(player, () -> player.sendMessage(message));
+                        } finally {
+                            container.busyUnlock(uuid, token);
+                        }
+                    }),
+                    () -> {
+                        container.busyUnlock(uuid, token);
+                        resourceLib.runAtEntity(player, () -> player.sendMessage(colorize(
+                                "&c背包尚未初始化，请先手持右键打开一次。")));
+                    });
+        });
+    }
+
+    /** 一个网络容器 + 它里面「该背包允许装载」的槽位快照。 */
+    private record Source(Inventory inventory, List<SmartContainer.ContainerSlot> found) { }
+
     private void open(Player player, Block block) {
         UUID uuid = player.getUniqueId();
         Object token = new Object();
@@ -707,7 +845,9 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
     private static boolean isOurTitle(String title) {
         // 用「包含」而不是精确相等：新版服务端把标题转成文本组件再取回时，
         // 颜色码可能被规范化，精确比较会误判成「不是我们的界面」。
-        return title != null && title.contains("智能存储");
+        // 前缀必须足够独特：卸载 / 加载终端的配置页标题是「智能存储卸载终端 /
+        // 智能存储加载终端」，不含本串，不会被这个监听器误当成自己的界面。
+        return title != null && title.contains("智能存储交互终端");
     }
 
     /** 开界面后重新发现一次网络，捕捉期间放置 / 拆除的箱子。 */
@@ -842,12 +982,20 @@ public class SmartStorageInterface extends SlimefunItem implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent event) {
-        onTopologyChanged(StorageNetwork.BlockKey.of(event.getBlock()));
+        Block block = event.getBlock();
+        // 无条件尝试移除：MONITOR 阶段 Slimefun 可能已经清掉 BlockStorage，
+        // 这时再 check(block) == this 会漏登记，而 unregister 对未登记位置是空操作。
+        StorageAccess.unregister(block.getLocation());
+        onTopologyChanged(StorageNetwork.BlockKey.of(block));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockPlace(BlockPlaceEvent event) {
-        onTopologyChanged(StorageNetwork.BlockKey.of(event.getBlock()));
+        Block block = event.getBlock();
+        if (SlimefunItem.getByItem(event.getItemInHand()) == this) {
+            StorageAccess.register(block.getLocation());
+        }
+        onTopologyChanged(StorageNetwork.BlockKey.of(block));
     }
 
     /**

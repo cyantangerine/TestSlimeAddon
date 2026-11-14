@@ -501,6 +501,49 @@ public final class StorageNetwork {
         return distances;
     }
 
+    /**
+     * 找出与起点处于同一连接器网络的所有智能存储交互终端方块坐标。
+     *
+     * <p>交互终端不参与泛洪，但它是网络的入口、一定挨着某个连接器，所以沿连接器
+     * BFS 时检查每个连接器的 6 邻格即可。给「至少一个交互终端的成员权限」提供
+     * 全局 ACL 索引的自愈能力：老存档 / 重启后坐标表还没登记时，只要玩家用的是
+     * 一个连着交互终端的存储网络，这里就能把坐标补回去。</p>
+     */
+    public static List<Location> discoverInterfaceBlocks(Location origin,
+                                                          SlimefunItem connectorItem,
+                                                          SlimefunItem interfaceItem) {
+        List<Location> result = new ArrayList<>();
+        if (origin == null || origin.getWorld() == null || interfaceItem == null) {
+            return result;
+        }
+        BlockKey start = BlockKey.of(origin);
+        Set<BlockKey> visited = new LinkedHashSet<>();
+        Queue<BlockKey> queue = new ArrayDeque<>();
+        for (BlockKey neighbour : start.neighbours()) {
+            if (isConnector(neighbour, connectorItem) && visited.add(neighbour)) {
+                queue.add(neighbour);
+            }
+        }
+        Set<BlockKey> found = new LinkedHashSet<>();
+        while (!queue.isEmpty() && visited.size() < MAX_CONNECTORS) {
+            BlockKey current = queue.poll();
+            for (BlockKey neighbour : current.neighbours()) {
+                if (isInterface(neighbour, interfaceItem)) {
+                    found.add(neighbour);
+                } else if (isConnector(neighbour, connectorItem) && visited.add(neighbour)) {
+                    queue.add(neighbour);
+                }
+            }
+        }
+        for (BlockKey key : found) {
+            Location location = key.location();
+            if (location != null) {
+                result.add(location);
+            }
+        }
+        return result;
+    }
+
     /** 把所有已放置连接器按连通分量分组（只读 BlockStorage）。 */
     public static List<Set<BlockKey>> connectorComponents(Iterable<BlockKey> placed, SlimefunItem connectorItem) {
         Set<BlockKey> remaining = new LinkedHashSet<>();
